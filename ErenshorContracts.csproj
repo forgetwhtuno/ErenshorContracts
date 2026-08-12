@@ -11,7 +11,7 @@
     <Compile Include="src\*.cs" />
   </ItemGroup>
   <ItemGroup>
-    <Reference Include="BepInEx"><HintPath>refs\BepInEx.dll</HintPath></Reference>
+    <Reference Include="Lunaris"><HintPath>refs\Lunaris.dll</HintPath></Reference>
     <Reference Include="netstandard"><HintPath>refs\netstandard.dll</HintPath></Reference>
     <Reference Include="UnityEngine"><HintPath>refs\UnityEngine.dll</HintPath></Reference>
     <Reference Include="UnityEngine.CoreModule"><HintPath>refs\UnityEngine.CoreModule.dll</HintPath></Reference>

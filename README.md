@@ -20,7 +20,7 @@ This first Preview deliberately builds the **board, daily rotation, progress/per
 - reflection-friendly provider API for other mods to register real activity contracts;
 - provider progress reports are fact-only: the companion mod must verify the event;
 - optional Journal integration: claiming a contract appends one Chronicle entry if Erenshor Journal is installed;
-- local sidecar storage under `BepInEx/config/ErenshorContracts/`.
+- local sidecar storage under `plugins/config/ErenshorContracts/`.
 
 ## Important Preview boundary
 
@@ -112,13 +112,15 @@ That should make the board/persistence/provider core unusually resilient to Eren
 
 ## Build / install
 
-Run:
+This version requires **native Lunaris** — BepInEx is no longer required. Run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\BUILD_AND_INSTALL.ps1
 ```
 
-The script locates the current Erenshor install and a BepInEx profile, validates required Unity/BepInEx DLLs, compiles, and installs only `ErenshorContracts.dll` plus license files.
+The script locates the current Erenshor install and the Lunaris developer reference, compiles, and installs only `ErenshorContracts.dll` to `<Erenshor>\plugins\`. Lunaris manages enable/disable and config; local contract state moves to `plugins\config\ErenshorContracts\`. A legacy BepInEx release remains available in this repository's Git history.
+
+**Status:** this native build compiles cleanly against the installed Lunaris/Assembly-CSharp and passes its deterministic test suite. It has not yet been live-tested in-game under Lunaris (enable/disable/reload behavior). Do not assume hot-reload safety until that pass is done.
 
 ## Testing
 

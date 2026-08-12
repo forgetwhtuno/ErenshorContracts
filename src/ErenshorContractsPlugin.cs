@@ -1,16 +1,17 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using BepInEx;
-using BepInEx.Configuration;
+using Lunaris;
+using Lunaris.Config;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
 namespace ErenshorContracts
 {
-    [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
-    [BepInProcess("Erenshor.exe")]
-    public sealed class ErenshorContractsPlugin : BaseUnityPlugin
+    [LunarisPlugin(PluginGuid, PluginVersion, "forgetwhtuno",
+        "Local/daily contract board with a provider API for other mods to register verified objectives.")]
+    [LunarisPermission(LunarisPermission.FileAccess | LunarisPermission.Reflection)]
+    public sealed class ErenshorContractsPlugin : LunarisPlugin
     {
         internal const string PluginGuid = "forgetwhtuno.erenshor.contracts";
         internal const string PluginName = "Erenshor Contracts";
@@ -20,15 +21,16 @@ namespace ErenshorContracts
         private readonly Dictionary<string, ContractTemplate> _templateByKey =
             new Dictionary<string, ContractTemplate>(StringComparer.OrdinalIgnoreCase);
 
-        private ConfigEntry<float> _launcherX;
-        private ConfigEntry<float> _launcherY;
-        private ConfigEntry<float> _windowX;
-        private ConfigEntry<float> _windowY;
-        private ConfigEntry<float> _windowWidth;
-        private ConfigEntry<float> _windowHeight;
-        private ConfigEntry<int> _dailySlots;
-        private ConfigEntry<int> _patrolMinutes;
-        private ConfigEntry<string> _profileKey;
+        private ContractsSettings _settings;
+        private ContractsConfigEntry<float> _launcherX;
+        private ContractsConfigEntry<float> _launcherY;
+        private ContractsConfigEntry<float> _windowX;
+        private ContractsConfigEntry<float> _windowY;
+        private ContractsConfigEntry<float> _windowWidth;
+        private ContractsConfigEntry<float> _windowHeight;
+        private ContractsConfigEntry<int> _dailySlots;
+        private ContractsConfigEntry<int> _patrolMinutes;
+        private ContractsConfigEntry<string> _profileKey;
 
         private ContractStore _store;
         private ContractDocument _document;
@@ -49,28 +51,16 @@ namespace ErenshorContracts
 
         private void Awake()
         {
-            _launcherX = Config.Bind("UI", "LauncherX", -1f,
-                "Saved Contracts launcher X position. -1 places it near the right side on first use.");
-            _launcherY = Config.Bind("UI", "LauncherY", -1f,
-                "Saved Contracts launcher Y position. -1 places it below the usual map area on first use.");
-            _windowX = Config.Bind("UI", "WindowX", -1f, "Saved Contracts window X position.");
-            _windowY = Config.Bind("UI", "WindowY", -1f, "Saved Contracts window Y position.");
-            _windowWidth = Config.Bind("UI", "WindowWidth", 690f, "Contracts window width in pixels.");
-            _windowHeight = Config.Bind("UI", "WindowHeight", 540f, "Contracts window height in pixels.");
+            _settings = new ContractsSettings();
+            Config.Register(ref _settings);
+            InitializeConfigEntries();
 
-            _dailySlots = Config.Bind("Contracts", "DailySlots", 3,
-                "Number of deterministic daily contracts offered in each scene, clamped to 1-6.");
-            _patrolMinutes = Config.Bind("Contracts", "PatrolMinutes", 3,
-                "Minutes required by the built-in Local Patrol fallback, clamped to 1-60.");
-            _profileKey = Config.Bind("Contracts", "ProfileKey", "local",
-                "Local sidecar profile key used to keep daily rotation stable. Change it only if you intentionally want a separate Contracts profile.");
-
-            string dataDirectory = Path.Combine(Paths.ConfigPath, "ErenshorContracts");
+            string dataDirectory = Path.Combine(Path.Combine(AppContext.BaseDirectory, "plugins", "config"), "ErenshorContracts");
             _store = new ContractStore(Path.Combine(dataDirectory, "contracts.dat"));
             string warning;
             _document = _store.Load(out warning);
             if (!string.IsNullOrEmpty(warning))
-                Logger.LogWarning("Erenshor Contracts recovered from unreadable local data. " + warning);
+                Logging.LogWarning("Erenshor Contracts recovered from unreadable local data. " + warning);
 
             _window = new ContractBoardWindow();
             _launcher = new ContractLauncher();
@@ -85,10 +75,23 @@ namespace ErenshorContracts
             SceneManager.sceneLoaded += OnSceneLoaded;
             RebuildOffers();
 
-            Logger.LogInfo(
+            Logging.LogInfo(
                 "Erenshor Contracts " + PluginVersion +
                 " loaded. Use the draggable CONTRACTS UI button. No global hotkey is registered. " +
                 "This Preview tracks local contracts but deliberately does not grant native XP, gold, or items.");
+        }
+
+        private void InitializeConfigEntries()
+        {
+            _launcherX = new ContractsConfigEntry<float>(delegate { return _settings.LauncherX; }, delegate(float v) { _settings.LauncherX = v; });
+            _launcherY = new ContractsConfigEntry<float>(delegate { return _settings.LauncherY; }, delegate(float v) { _settings.LauncherY = v; });
+            _windowX = new ContractsConfigEntry<float>(delegate { return _settings.WindowX; }, delegate(float v) { _settings.WindowX = v; });
+            _windowY = new ContractsConfigEntry<float>(delegate { return _settings.WindowY; }, delegate(float v) { _settings.WindowY = v; });
+            _windowWidth = new ContractsConfigEntry<float>(delegate { return _settings.WindowWidth; }, delegate(float v) { _settings.WindowWidth = v; });
+            _windowHeight = new ContractsConfigEntry<float>(delegate { return _settings.WindowHeight; }, delegate(float v) { _settings.WindowHeight = v; });
+            _dailySlots = new ContractsConfigEntry<int>(delegate { return _settings.DailySlots; }, delegate(int v) { _settings.DailySlots = v; });
+            _patrolMinutes = new ContractsConfigEntry<int>(delegate { return _settings.PatrolMinutes; }, delegate(int v) { _settings.PatrolMinutes = v; });
+            _profileKey = new ContractsConfigEntry<string>(delegate { return _settings.ProfileKey; }, delegate(string v) { _settings.ProfileKey = v; });
         }
 
         private void Update()
@@ -120,7 +123,7 @@ namespace ErenshorContracts
             }
             catch (Exception ex)
             {
-                Logger.LogError("Erenshor Contracts update failed: " + ex);
+                Logging.LogError("Erenshor Contracts update failed: " + ex);
             }
         }
 
@@ -157,7 +160,7 @@ namespace ErenshorContracts
             }
             catch (Exception ex)
             {
-                Logger.LogError("Erenshor Contracts UI failed: " + ex);
+                Logging.LogError("Erenshor Contracts UI failed: " + ex);
                 if (_open) CloseBoard();
             }
         }
@@ -342,7 +345,7 @@ namespace ErenshorContracts
             {
                 _dirty = true;
                 _saveAfter = Time.unscaledTime + 5f;
-                Logger.LogError("Erenshor Contracts could not save local state: " +
+                Logging.LogError("Erenshor Contracts could not save local state: " +
                                 ex.GetType().Name + ": " + ex.Message);
             }
         }
@@ -387,39 +390,21 @@ namespace ErenshorContracts
         {
             if (_windowX == null || _windowY == null || _windowWidth == null || _windowHeight == null) return;
             Rect rect = ClampWindowRect(_windowRect);
-            bool previous = Config.SaveOnConfigSet;
-            try
-            {
-                Config.SaveOnConfigSet = false;
-                _windowX.Value = rect.x;
-                _windowY.Value = rect.y;
-                _windowWidth.Value = rect.width;
-                _windowHeight.Value = rect.height;
-                Config.Save();
-            }
-            finally
-            {
-                Config.SaveOnConfigSet = previous;
-            }
+            _windowX.Value = rect.x;
+            _windowY.Value = rect.y;
+            _windowWidth.Value = rect.width;
+            _windowHeight.Value = rect.height;
+            Config.Save();
         }
 
         private void PersistLauncherRect()
         {
             if (_launcherX == null || _launcherY == null) return;
             Rect rect = ClampLauncherRect(_launcherRect);
-            bool previous = Config.SaveOnConfigSet;
-            try
-            {
-                Config.SaveOnConfigSet = false;
-                _launcherX.Value = rect.x;
-                _launcherY.Value = rect.y;
-                Config.Save();
-                _launcherDirty = false;
-            }
-            finally
-            {
-                Config.SaveOnConfigSet = previous;
-            }
+            _launcherX.Value = rect.x;
+            _launcherY.Value = rect.y;
+            Config.Save();
+            _launcherDirty = false;
         }
 
         private static bool IsUsableScene(string scene)
