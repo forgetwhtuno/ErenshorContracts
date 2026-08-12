@@ -1,0 +1,12 @@
+bin/
+obj/
+refs/
+*.user
+*.suo
+*.rsp
+*.dll
+*.pdb
+*.log
+.vs/
+.idea/
+.vscode/
