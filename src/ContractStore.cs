@@ -136,6 +136,53 @@ namespace ErenshorContracts
             File.Move(temp, _path);
         }
 
+        // First-character-to-load-may-claim-once policy for the pre-migration global save file.
+        // The legacy file is never deleted or truncated by this method. Returns true only when
+        // the legacy data was actually copied into destinationPath for the given character.
+        internal static bool TryClaimLegacyData(string legacyPath, string claimMarkerPath, string destinationPath, string characterKey)
+        {
+            if (string.IsNullOrWhiteSpace(legacyPath) || string.IsNullOrWhiteSpace(claimMarkerPath) ||
+                string.IsNullOrWhiteSpace(destinationPath))
+                return false;
+
+            if (!File.Exists(legacyPath)) return false;
+            if (File.Exists(claimMarkerPath)) return false;
+
+            if (File.Exists(destinationPath))
+            {
+                // This character already has its own data (e.g. from a prior run of this fix).
+                // Don't overwrite it, but mark the legacy data claimed so no later character adopts it.
+                WriteClaimMarker(claimMarkerPath, characterKey);
+                return false;
+            }
+
+            try
+            {
+                string directory = System.IO.Path.GetDirectoryName(destinationPath);
+                if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
+                File.Copy(legacyPath, destinationPath, false);
+                WriteClaimMarker(claimMarkerPath, characterKey);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static void WriteClaimMarker(string path, string characterKey)
+        {
+            try
+            {
+                string directory = System.IO.Path.GetDirectoryName(path);
+                if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
+                string body = "claimed_by=" + (characterKey ?? string.Empty) + Environment.NewLine +
+                              "claimed_utc=" + DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+                File.WriteAllText(path, body, new UTF8Encoding(false));
+            }
+            catch { }
+        }
+
         private void TryBackupUnreadable()
         {
             try

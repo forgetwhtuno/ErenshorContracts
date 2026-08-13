@@ -1,17 +1,17 @@
 param(
-    [string]$BepInExRoot = ""
+    [string]$GameDir = ""
 )
 $ErrorActionPreference = "Stop"
 
-if (-not $BepInExRoot) {
-    throw "Pass -BepInExRoot pointing at the profile/root that contains BepInEx."
+if (-not $GameDir) {
+    throw "Pass -GameDir pointing at the Erenshor install folder (contains Erenshor.exe)."
 }
-$pluginDir = Join-Path $BepInExRoot "BepInEx\plugins\ErenshorContracts"
-if (Test-Path $pluginDir) {
-    Remove-Item -Recurse -Force $pluginDir
-    Write-Host "Removed Erenshor Contracts plugin files." -ForegroundColor Green
+$dll = Join-Path $GameDir "plugins\ErenshorContracts.dll"
+if (Test-Path $dll) {
+    Remove-Item -Force $dll
+    Write-Host "Removed Erenshor Contracts plugin file." -ForegroundColor Green
 }
 else {
-    Write-Host "Erenshor Contracts plugin folder was not present."
+    Write-Host "Erenshor Contracts plugin file was not present."
 }
-Write-Host "Saved contract state under BepInEx\config\ErenshorContracts is intentionally left in place." -ForegroundColor Yellow
+Write-Host "Saved contract state under plugins\config\ErenshorContracts is intentionally left in place." -ForegroundColor Yellow

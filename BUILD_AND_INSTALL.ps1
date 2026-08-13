@@ -1,6 +1,6 @@
 param(
     [string]$GameDir = "",
-    [string]$BepInExRoot = ""
+    [string]$LunarisLibDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,26 +33,18 @@ function Find-Game([string]$Explicit) {
     throw "Erenshor installation not found. Pass -GameDir 'C:\path\to\Erenshor'."
 }
 
-function Find-BepInExRoots([string]$Explicit, [string]$Game) {
-    if ($Explicit -and (Test-Path (Join-Path $Explicit "BepInEx\core\BepInEx.dll"))) {
-        return ,(Resolve-Path $Explicit).Path
+function Find-LunarisLibDir([string]$Explicit, [string]$Game) {
+    $candidates = @()
+    if ($Explicit) { $candidates += $Explicit }
+    $candidates += (Join-Path $ScriptRoot "LunarisLibs")
+    $candidates += $Game
+
+    foreach ($candidate in ($candidates | Select-Object -Unique)) {
+        if (-not $candidate) { continue }
+        if (Test-Path (Join-Path $candidate "Lunaris.dll")) { return (Resolve-Path $candidate).Path }
     }
 
-    $roots = @()
-    if (Test-Path (Join-Path $Game "BepInEx\core\BepInEx.dll")) { $roots += (Resolve-Path $Game).Path }
-
-    foreach ($parent in @(
-        (Join-Path $env:APPDATA "r2modmanPlus-local\Erenshor\profiles"),
-        (Join-Path $env:APPDATA "Thunderstore Mod Manager\DataFolder\Erenshor\profiles")
-    )) {
-        if (Test-Path $parent) {
-            Get-ChildItem $parent -Directory | ForEach-Object {
-                if (Test-Path (Join-Path $_.FullName "BepInEx\core\BepInEx.dll")) { $roots += $_.FullName }
-            }
-        }
-    }
-
-    return @($roots | Select-Object -Unique)
+    throw "Could not find Lunaris.dll developer reference. Put it in '$ScriptRoot\LunarisLibs' or pass -LunarisLibDir."
 }
 
 function Find-Csc {
@@ -66,51 +58,52 @@ function Find-Csc {
 }
 
 $GameDir = Find-Game $GameDir
-$roots = @(Find-BepInExRoots $BepInExRoot $GameDir)
-if ($roots.Count -eq 0) { throw "No BepInEx profile found. Launch Erenshor modded once, then rerun this script." }
-
-if ($roots.Count -gt 1) {
-    Write-Host "Multiple BepInEx roots found:"
-    for ($i = 0; $i -lt $roots.Count; $i++) { Write-Host ("[{0}] {1}" -f $i, $roots[$i]) }
-    $index = [int](Read-Host "Choose profile number (0-$($roots.Count - 1))")
-    if ($index -lt 0 -or $index -ge $roots.Count) { throw "Invalid profile number: $index" }
-    $InstallRoot = $roots[$index]
-}
-else {
-    $InstallRoot = $roots[0]
-}
-
+$LunarisLibDir = Find-LunarisLibDir $LunarisLibDir $GameDir
 $csc = Find-Csc
 $managed = Join-Path $GameDir "Erenshor_Data\Managed"
-$core = Join-Path $InstallRoot "BepInEx\core"
-$pluginDir = Join-Path $InstallRoot "BepInEx\plugins\ErenshorContracts"
-New-Item -ItemType Directory -Force -Path $pluginDir | Out-Null
+$pluginRoot = Join-Path $GameDir "plugins"
+New-Item -ItemType Directory -Force -Path $pluginRoot | Out-Null
 
 $refs = @(
-    (Join-Path $core "BepInEx.dll"),
+    (Join-Path $LunarisLibDir "Lunaris.dll"),
+    (Join-Path $LunarisLibDir "0Harmony.dll"),
+    (Join-Path $managed "Assembly-CSharp.dll"),
     (Join-Path $managed "netstandard.dll"),
     (Join-Path $managed "UnityEngine.dll"),
     (Join-Path $managed "UnityEngine.CoreModule.dll"),
+    (Join-Path $managed "UnityEngine.UI.dll"),
     (Join-Path $managed "UnityEngine.IMGUIModule.dll"),
-    (Join-Path $managed "UnityEngine.TextRenderingModule.dll")
+    (Join-Path $managed "UnityEngine.TextRenderingModule.dll"),
+    (Join-Path $managed "UnityEngine.InputLegacyModule.dll")
 )
 foreach ($ref in $refs) { if (-not (Test-Path $ref)) { throw "Missing reference: $ref" } }
 
-$out = Join-Path $pluginDir "ErenshorContracts.dll"
-$rsp = Join-Path $env:TEMP "ErenshorContracts.rsp"
-$lines = @('/nologo', '/target:library', '/optimize+', ('/out:"{0}"' -f $out))
-$refs | ForEach-Object { $lines += ('/reference:"{0}"' -f $_) }
-Get-ChildItem (Join-Path $ScriptRoot "src") -Filter "*.cs" | Sort-Object Name | ForEach-Object { $lines += '"' + $_.FullName + '"' }
-$lines | Set-Content $rsp -Encoding ASCII
+$TempDir = Join-Path $env:TEMP ("ErenshorContracts-build-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
+$TempDll = Join-Path $TempDir "ErenshorContracts.dll"
+$rsp = Join-Path $TempDir "ErenshorContracts.rsp"
+$out = Join-Path $pluginRoot "ErenshorContracts.dll"
 
-Write-Host "Building Erenshor Contracts against current installed Unity/BepInEx assemblies..." -ForegroundColor Cyan
-Write-Host "  Game:    $GameDir"
-Write-Host "  BepInEx: $InstallRoot"
-& $csc "@$rsp"
-if ($LASTEXITCODE -ne 0) { throw "Compilation failed. Copy the compiler errors and send them back for correction." }
+try {
+    $lines = @('/nologo', '/target:library', '/optimize+', ('/out:"{0}"' -f $TempDll))
+    $refs | ForEach-Object { $lines += ('/reference:"{0}"' -f $_) }
+    Get-ChildItem (Join-Path $ScriptRoot "src") -Filter "*.cs" | Sort-Object Name | ForEach-Object { $lines += '"' + $_.FullName + '"' }
+    $lines | Set-Content $rsp -Encoding ASCII
 
-Copy-Item (Join-Path $ScriptRoot "LICENSE") (Join-Path $pluginDir "LICENSE") -Force
-Copy-Item (Join-Path $ScriptRoot "NOTICE") (Join-Path $pluginDir "NOTICE") -Force
+    $lunarisHash = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $LunarisLibDir "Lunaris.dll")).Hash.ToLowerInvariant()
+    Write-Host "Building Erenshor Contracts as a native Lunaris plugin..." -ForegroundColor Cyan
+    Write-Host "  Game:    $GameDir"
+    Write-Host "  Lunaris: $LunarisLibDir\Lunaris.dll ($lunarisHash)"
+    & $csc "@$rsp"
+    if ($LASTEXITCODE -ne 0) { throw "Compilation failed. Copy the compiler errors and send them back for correction." }
+    if (-not (Test-Path $TempDll)) { throw "Compiler reported success but did not produce $TempDll" }
+
+    Copy-Item -LiteralPath $TempDll -Destination $out -Force
+}
+finally {
+    if (Test-Path $TempDir) { Remove-Item -LiteralPath $TempDir -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
 Write-Host "Installed Erenshor Contracts to $out" -ForegroundColor Green
 Write-Host "Use the draggable CONTRACTS UI button in game. No global hotkey is registered." -ForegroundColor Green
-Write-Host "Local contract state is stored under BepInEx\config\ErenshorContracts." -ForegroundColor Green
+Write-Host "Local contract state is stored under plugins\config\ErenshorContracts." -ForegroundColor Green

@@ -17,6 +17,7 @@ namespace ErenshorContracts
         private GUIStyle _windowStyle;
         private GUIStyle _buttonStyle;
         private GUIStyle _openButtonStyle;
+        private GUIStyle _gripStyle;
 
         internal bool RequestToggle
         {
@@ -52,13 +53,21 @@ namespace ErenshorContracts
             _windowStyle = null;
             _buttonStyle = null;
             _openButtonStyle = null;
+            _gripStyle = null;
         }
 
         private void DrawContents(int id)
         {
-            if (GUI.Button(new Rect(5f, 5f, Width - 10f, Height - 10f), "CONTRACTS", _open ? _openButtonStyle : _buttonStyle))
+            // Matches ErenshorJournal's JournalLauncher interaction model: a narrow grip strip
+            // owns dragging and a separate pure-click button area fills the rest of the launcher.
+            // GUI.DragWindow's rect must never overlap the button rect below -- if it does, a
+            // click that lands inside both can be consumed as a drag-start instead of being
+            // delivered to the button, which was the previous bug (launcher couldn't be dragged
+            // cleanly and clicks didn't reliably open the board).
+            GUI.Label(new Rect(3f, 5f, 14f, 24f), "||", _gripStyle);
+            if (GUI.Button(new Rect(18f, 4f, Width - 22f, 26f), "CONTRACTS", _open ? _openButtonStyle : _buttonStyle))
                 _requestToggle = true;
-            GUI.DragWindow(new Rect(0f, 0f, Width, Height));
+            GUI.DragWindow(new Rect(0f, 0f, 18f, Height));
         }
 
         private void EnsureStyles()
@@ -80,6 +89,12 @@ namespace ErenshorContracts
             _buttonStyle = CreateButtonStyle(_buttonTexture, _buttonHoverTexture);
             _openButtonStyle = CreateButtonStyle(_buttonOpenTexture, _buttonHoverTexture);
             _openButtonStyle.fontStyle = FontStyle.Bold;
+
+            _gripStyle = new GUIStyle(GUI.skin.label);
+            _gripStyle.fontSize = 10;
+            _gripStyle.fontStyle = FontStyle.Bold;
+            _gripStyle.alignment = TextAnchor.MiddleCenter;
+            _gripStyle.normal.textColor = new Color(0.56f, 0.88f, 1f, 0.95f);
         }
 
         private static GUIStyle CreateButtonStyle(Texture2D normal, Texture2D hover)

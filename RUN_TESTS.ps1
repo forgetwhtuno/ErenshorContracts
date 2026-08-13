@@ -16,7 +16,12 @@ $out = Join-Path $env:TEMP "ErenshorContractsCoreTests.exe"
 & $csc /nologo /target:exe /out:$out `
     (Join-Path $ScriptRoot "src\ContractModels.cs") `
     (Join-Path $ScriptRoot "src\ContractCore.cs") `
-    (Join-Path $ScriptRoot "tests\ContractCoreTests.cs")
+    (Join-Path $ScriptRoot "src\ContractStore.cs") `
+    (Join-Path $ScriptRoot "src\ContractCharacterKey.cs") `
+    (Join-Path $ScriptRoot "tests\ContractCoreTests.cs") `
+    (Join-Path $ScriptRoot "tests\ContractCharacterKeyTests.cs") `
+    (Join-Path $ScriptRoot "tests\ContractStoreTests.cs") `
+    (Join-Path $ScriptRoot "tests\TestRunner.cs")
 if ($LASTEXITCODE -ne 0) { throw "Contracts core tests did not compile." }
 & $out
 if ($LASTEXITCODE -ne 0) { throw "Contracts core tests failed." }
