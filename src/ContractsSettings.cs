@@ -27,16 +27,19 @@ namespace ErenshorContracts
     {
         public ContractsSettings() { }
 
-        [Config("LauncherX", "UI", "Saved Contracts launcher X position. -1 places it near the right side on first use.")]
+        [Config("LauncherX", "UI", "Saved Contracts launcher horizontal position, normalized 0..1. Invalid/legacy pixel values recover to the safe default.")]
         public float LauncherX = -1f;
 
-        [Config("LauncherY", "UI", "Saved Contracts launcher Y position. -1 places it below the usual map area on first use.")]
+        [Config("LauncherY", "UI", "Saved Contracts launcher vertical position, normalized 0..1. Invalid/legacy pixel values recover to the safe default.")]
         public float LauncherY = -1f;
 
-        [Config("WindowX", "UI", "Saved Contracts window X position.")]
+        [Config("ShowStandaloneLauncherWithHub", "UI", "Show Contracts launcher while a usable Suite Hub bridge is present. If Hub or this module bridge is unavailable, the standalone launcher is forced visible for recovery.")]
+        public bool ShowStandaloneLauncherWithHub = false;
+
+        [Config("WindowX", "UI", "Saved Contracts window horizontal position, normalized 0..1. Invalid/legacy pixel values recover to the safe default.")]
         public float WindowX = -1f;
 
-        [Config("WindowY", "UI", "Saved Contracts window Y position.")]
+        [Config("WindowY", "UI", "Saved Contracts window vertical position, normalized 0..1. Invalid/legacy pixel values recover to the safe default.")]
         public float WindowY = -1f;
 
         [Config("WindowWidth", "UI", "Contracts window width in pixels.")]

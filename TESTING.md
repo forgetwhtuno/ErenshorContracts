@@ -3,7 +3,7 @@
 ## Build
 
 - [ ] `RUN_TESTS.ps1` reports PASS.
-- [ ] `BUILD_AND_INSTALL.ps1` compiles against the current installed BepInEx/Unity assemblies.
+- [ ] `BUILD_AND_INSTALL.ps1` compiles against the current installed Lunaris/Unity/game assemblies.
 - [ ] Only `ErenshorContracts.dll`, `LICENSE`, and `NOTICE` are installed under the plugin folder.
 - [ ] No `Assembly-CSharp.dll` or Harmony reference is required.
 

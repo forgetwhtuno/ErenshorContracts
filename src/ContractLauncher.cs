@@ -1,133 +1,82 @@
+using System;
+using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace ErenshorContracts
 {
     internal sealed class ContractLauncher
     {
-        private const int WindowId = 0x4552434C;
-        internal const float Width = 126f;
-        internal const float Height = 34f;
+        internal const float Width = 130f;
+        internal const float Height = 30f;
 
-        private bool _open;
-        private bool _requestToggle;
-        private Texture2D _panelTexture;
-        private Texture2D _buttonTexture;
-        private Texture2D _buttonHoverTexture;
-        private Texture2D _buttonOpenTexture;
-        private GUIStyle _windowStyle;
-        private GUIStyle _buttonStyle;
-        private GUIStyle _openButtonStyle;
-        private GUIStyle _gripStyle;
+        private GameObject _root;
+        private RectTransform _panel;
+        private TextMeshProUGUI _label;
+        private RetainedPosition _position;
+        private Action _toggle;
 
-        internal bool RequestToggle
+        internal void Initialize(float storedX, float storedY, Action<float, float> persist, Action toggle)
         {
-            get { return _requestToggle; }
+            Dispose();
+            _toggle = toggle;
+            _root = RetainedUiKit.CreateCanvas("ErenshorContractLauncherCanvas", 510);
+            RectTransform canvas = _root.GetComponent<RectTransform>();
+            _panel = RetainedUiKit.CreateRect("ContractLauncher", canvas);
+            RetainedUiKit.AnchorBottomLeft(_panel, 0f, 0f, Width, Height);
+            RetainedUiKit.AddImage(_panel, RetainedUiKit.Panel);
+
+            RectTransform grip = RetainedUiKit.CreateRect("DragGrip", _panel);
+            grip.anchorMin = Vector2.zero;
+            grip.anchorMax = new Vector2(0f, 1f);
+            grip.pivot = Vector2.zero;
+            grip.anchoredPosition = Vector2.zero;
+            grip.sizeDelta = new Vector2(20f, 0f);
+            RetainedUiKit.AddImage(grip, RetainedUiKit.Header);
+            TextMeshProUGUI diamond = RetainedUiKit.AddLabel("GripLabel", grip, "◇", 14f, FontStyles.Bold, TextAlignmentOptions.Center);
+            RetainedUiKit.Stretch(diamond.rectTransform, 0f, 0f, 0f, 0f);
+
+            Button button = RetainedUiKit.AddButton("OpenContracts", _panel, "CONTRACTS", delegate { if (_toggle != null) _toggle(); }, Width - 20f, Height, false);
+            RectTransform br = button.GetComponent<RectTransform>();
+            br.anchorMin = Vector2.zero;
+            br.anchorMax = Vector2.zero;
+            br.pivot = Vector2.zero;
+            br.anchoredPosition = new Vector2(20f, 0f);
+            br.sizeDelta = new Vector2(Width - 20f, Height);
+            LayoutElement le = br.GetComponent<LayoutElement>();
+            if (le != null) UnityEngine.Object.DestroyImmediate(le);
+            _label = button.GetComponentInChildren<TextMeshProUGUI>();
+
+            _position = new RetainedPosition(storedX, storedY, 0.86f, 0.82f, persist);
+            SuiteDragHandler drag = grip.gameObject.AddComponent<SuiteDragHandler>();
+            drag.Target = _panel;
+            drag.OnDragCompleted = delegate { if (_position != null) _position.DragCompleted(_panel); };
+            _position.Resolve(_panel);
+            _root.SetActive(false);
         }
 
-        internal Rect Draw(Rect rect, bool open)
+        internal void Tick(bool visible, bool open)
         {
-            EnsureStyles();
-            _open = open;
-            _requestToggle = false;
+            if (_root == null) return;
+            if (_root.activeSelf != visible) _root.SetActive(visible);
+            if (!visible) return;
+            if (_position != null) _position.Resolve(_panel);
+            if (_label != null) _label.text = open ? "CONTRACTS •" : "CONTRACTS";
+        }
 
-            int previousDepth = GUI.depth;
-            Rect result;
-            try
-            {
-                GUI.depth = -55;
-                result = GUI.Window(WindowId, rect, DrawContents, GUIContent.none, _windowStyle);
-            }
-            finally
-            {
-                GUI.depth = previousDepth;
-            }
-            return result;
+        internal void ResetPosition()
+        {
+            if (_position != null) _position.Reset(_panel);
         }
 
         internal void Dispose()
         {
-            DestroyTexture(ref _panelTexture);
-            DestroyTexture(ref _buttonTexture);
-            DestroyTexture(ref _buttonHoverTexture);
-            DestroyTexture(ref _buttonOpenTexture);
-            _windowStyle = null;
-            _buttonStyle = null;
-            _openButtonStyle = null;
-            _gripStyle = null;
-        }
-
-        private void DrawContents(int id)
-        {
-            // Matches ErenshorJournal's JournalLauncher interaction model: a narrow grip strip
-            // owns dragging and a separate pure-click button area fills the rest of the launcher.
-            // GUI.DragWindow's rect must never overlap the button rect below -- if it does, a
-            // click that lands inside both can be consumed as a drag-start instead of being
-            // delivered to the button, which was the previous bug (launcher couldn't be dragged
-            // cleanly and clicks didn't reliably open the board).
-            GUI.Label(new Rect(3f, 5f, 14f, 24f), "||", _gripStyle);
-            if (GUI.Button(new Rect(18f, 4f, Width - 22f, 26f), "CONTRACTS", _open ? _openButtonStyle : _buttonStyle))
-                _requestToggle = true;
-            GUI.DragWindow(new Rect(0f, 0f, 18f, Height));
-        }
-
-        private void EnsureStyles()
-        {
-            if (_windowStyle != null) return;
-
-            Color cyanEdge = new Color(0.03f, 0.67f, 0.86f, 0.95f);
-            Color softEdge = new Color(0.13f, 0.55f, 0.68f, 0.90f);
-            _panelTexture = FramedTexture(new Color(0.015f, 0.09f, 0.125f, 0.74f), cyanEdge);
-            _buttonTexture = FramedTexture(new Color(0.035f, 0.17f, 0.22f, 0.88f), softEdge);
-            _buttonHoverTexture = FramedTexture(new Color(0.12f, 0.38f, 0.48f, 0.94f), cyanEdge);
-            _buttonOpenTexture = FramedTexture(new Color(0.08f, 0.30f, 0.36f, 0.96f), cyanEdge);
-
-            _windowStyle = new GUIStyle(GUI.skin.window);
-            _windowStyle.normal.background = _panelTexture;
-            _windowStyle.border = new RectOffset(1, 1, 1, 1);
-            _windowStyle.padding = new RectOffset(0, 0, 0, 0);
-
-            _buttonStyle = CreateButtonStyle(_buttonTexture, _buttonHoverTexture);
-            _openButtonStyle = CreateButtonStyle(_buttonOpenTexture, _buttonHoverTexture);
-            _openButtonStyle.fontStyle = FontStyle.Bold;
-
-            _gripStyle = new GUIStyle(GUI.skin.label);
-            _gripStyle.fontSize = 10;
-            _gripStyle.fontStyle = FontStyle.Bold;
-            _gripStyle.alignment = TextAnchor.MiddleCenter;
-            _gripStyle.normal.textColor = new Color(0.56f, 0.88f, 1f, 0.95f);
-        }
-
-        private static GUIStyle CreateButtonStyle(Texture2D normal, Texture2D hover)
-        {
-            GUIStyle style = new GUIStyle(GUI.skin.button);
-            style.normal.background = normal;
-            style.hover.background = hover;
-            style.active.background = hover;
-            style.normal.textColor = new Color(0.84f, 0.94f, 1f, 1f);
-            style.hover.textColor = Color.white;
-            style.active.textColor = Color.white;
-            style.fontSize = 11;
-            style.border = new RectOffset(1, 1, 1, 1);
-            return style;
-        }
-
-        private static Texture2D FramedTexture(Color center, Color edge)
-        {
-            Texture2D texture = new Texture2D(3, 3, TextureFormat.RGBA32, false);
-            for (int y = 0; y < 3; y++)
-                for (int x = 0; x < 3; x++)
-                    texture.SetPixel(x, y, x == 0 || x == 2 || y == 0 || y == 2 ? edge : center);
-            texture.wrapMode = TextureWrapMode.Clamp;
-            texture.filterMode = FilterMode.Point;
-            texture.Apply(false, true);
-            return texture;
-        }
-
-        private static void DestroyTexture(ref Texture2D texture)
-        {
-            if (texture == null) return;
-            Object.Destroy(texture);
-            texture = null;
+            SuiteDragHandler.ForceReleaseIfOwned();
+            RetainedUiKit.DestroyRoot(ref _root);
+            _panel = null;
+            _label = null;
+            _position = null;
+            _toggle = null;
         }
     }
 }

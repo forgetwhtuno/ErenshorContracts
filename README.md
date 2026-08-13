@@ -8,8 +8,8 @@ This first Preview deliberately builds the **board, daily rotation, progress/per
 
 ## What works now
 
-- draggable `CONTRACTS` HUD button; **no global hotkey**;
-- draggable/resizable Party Tools / Follow-style window;
+- retained-uGUI `CONTRACTS` launcher with Suite-style drag/fallback visibility; **no global hotkey**;
+- retained-uGUI Contract Board with visible close/reset controls, Suite-style drag, retained resize grip, and a scrollable contract list;
 - deterministic per-day, per-scene contract rotation;
 - accept / abandon / claim flow;
 - persisted active contracts and completion history;
@@ -97,18 +97,14 @@ This follows the same general visual language already used by the `forgetwhtuno`
 
 - dark translucent panel;
 - cyan/teal frame;
-- compact draggable launcher;
+- compact retained-uGUI launcher with Suite-style drag;
 - no required F-key;
-- resizable main window;
-- saved/clamped panel positions.
+- dedicated scrollable Contract Board with configured size;
+- normalized, saved/clamped panel positions.
 
 ## Maintenance philosophy
 
-0.1.0 deliberately does **not** reference `Assembly-CSharp.dll`, Harmony, game inventory, NPC combat, quest state, or save files.
-
-The only live game-adjacent fact it owns is the active Unity scene name.
-
-That should make the board/persistence/provider core unusually resilient to Erenshor patches. Later adapters can be narrow and capability-checked.
+The contract/persistence/provider core remains deliberately narrow and does not mutate game inventory, NPC combat, quest state, native rewards, or Erenshor saves. The current native-Lunaris shell does reference `Assembly-CSharp.dll` only for bounded gameplay-readiness/character context; the retained-uGUI migration itself uses no Harmony patching. Native rewards remain outside this Preview until a verified adapter exists.
 
 ## Build / install
 
@@ -120,7 +116,7 @@ powershell -ExecutionPolicy Bypass -File .\BUILD_AND_INSTALL.ps1
 
 The script locates the current Erenshor install and the Lunaris developer reference, compiles, and installs only `ErenshorContracts.dll` to `<Erenshor>\plugins\`. Lunaris manages enable/disable and config; local contract state moves to `plugins\config\ErenshorContracts\`. A legacy BepInEx release remains available in this repository's Git history.
 
-**Status:** this native build compiles cleanly against the installed Lunaris/Assembly-CSharp and passes its deterministic test suite. It has not yet been live-tested in-game under Lunaris (enable/disable/reload behavior). Do not assume hot-reload safety until that pass is done.
+**Status:** the pre-uGUI native baseline compiled and passed its deterministic tests. The retained-uGUI candidate in this handoff is source-verified but could not be recompiled here because the handoff omitted native Erenshor/Lunaris reference DLLs. Live enable/disable/reload verification is still required.
 
 ## Testing
 
@@ -149,3 +145,18 @@ See `TESTING.md` for in-game acceptance checks.
 This project has been developed heavily with AI-assisted coding tools. The goal is to build features I wanted to use in Erenshor, with development guided through design, testing, playtesting, audits, and iteration against the game. Bug reports, code review, corrections, and contributions from experienced Erenshor modders are welcome.
 
 This is an unofficial, community-made mod for Erenshor and is not affiliated with or endorsed by the game's developer.
+
+
+## Optional Suite Hub integration
+
+Erenshor Suite Hub is **optional**. When it is installed, this mod can expose its normal player-facing controls there through the versioned public `ContractsControlApi` surface. The mod remains independently usable without Suite Hub and does not compile against Hub types or assume Hub load order.
+
+The Contract Board remains the dedicated interface for accepting, abandoning, and claiming contracts. A compact standalone launcher is a fallback and is hidden by default while Suite Hub is loaded.
+
+Hub can show available/active/progress summaries and open or close the Contract Board.
+
+The shared control/API and fully-in-world UI policy in this handoff are source-validated but **not yet live-tested under Lunaris hot reload**.
+
+### Content/UI migration candidate
+
+The current source moves the Contract Board and launcher to retained Unity uGUI and removes the obsolete UI-only world-click/camera Harmony interception. Contract actions still route through the existing authoritative contract services; the Hub receives only bounded status/settings and Open/Close/Reset actions. The completed duplicate-instance investigation no longer emits per-tick diagnostics. Native compile and live Lunaris UI/reload verification remain required for this candidate.

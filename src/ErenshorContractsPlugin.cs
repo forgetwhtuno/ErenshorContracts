@@ -4,7 +4,6 @@ using System.IO;
 using System.Linq;
 using Lunaris;
 using Lunaris.Config;
-using HarmonyLib;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -12,7 +11,7 @@ namespace ErenshorContracts
 {
     [LunarisPlugin(PluginGuid, PluginVersion, "forgetwhtuno",
         "Local/daily contract board with a provider API for other mods to register verified objectives.")]
-    [LunarisPermission(LunarisPermission.FileAccess | LunarisPermission.Reflection | LunarisPermission.Harmony)]
+    [LunarisPermission(LunarisPermission.FileAccess | LunarisPermission.Reflection)]
     public sealed class ErenshorContractsPlugin : LunarisPlugin
     {
         internal const string PluginGuid = "forgetwhtuno.erenshor.contracts";
@@ -20,7 +19,7 @@ namespace ErenshorContracts
         internal const string PluginVersion = "0.1.1";
 
         internal static ErenshorContractsPlugin Instance;
-        private Harmony _harmony;
+        private ContractsSuiteAuraProvider _auraProvider;
 
         private readonly List<ContractTemplate> _templates = new List<ContractTemplate>();
         private readonly Dictionary<string, ContractTemplate> _templateByKey =
@@ -29,6 +28,7 @@ namespace ErenshorContracts
         private ContractsSettings _settings;
         private ContractsConfigEntry<float> _launcherX;
         private ContractsConfigEntry<float> _launcherY;
+        private ContractsConfigEntry<bool> _showStandaloneLauncherWithHub;
         private ContractsConfigEntry<float> _windowX;
         private ContractsConfigEntry<float> _windowY;
         private ContractsConfigEntry<float> _windowWidth;
@@ -41,13 +41,9 @@ namespace ErenshorContracts
         private ContractDocument _document;
         private ContractBoardWindow _window;
         private ContractLauncher _launcher;
-        private Rect _windowRect;
-        private Rect _launcherRect;
         private bool _open;
         private bool _dirty;
         private float _saveAfter;
-        private bool _launcherDirty;
-        private float _launcherSaveAfter;
         private bool _cursorVisibleBeforeOpen;
         private CursorLockMode _cursorLockBeforeOpen;
         private string _currentZone;
@@ -62,26 +58,21 @@ namespace ErenshorContracts
         private string _legacyClaimMarkerPath;
         private string _characterKey;
 
-        // Toggle/close requests observed in OnGUI are applied in Update, never mid-OnGUI. IMGUI
-        // dispatches several event passes (Layout, input, Repaint) per rendered frame; flipping
-        // _open in the middle of that sequence desyncs GUI.Window's Layout/Repaint bookkeeping,
-        // throws, and is swallowed by OnGUI's own try/catch below -- which then force-closes the
-        // board it just opened. Deferring the mutation to Update keeps _open constant for the
-        // whole of every OnGUI pass in a given frame. See DiagLogEnabled for how this was traced.
+        // Retained-uGUI callbacks queue open/close/toggle requests; Update applies the authoritative
+        // state transition once per frame so UI, commands and Hub actions share the same route.
         private bool _pendingToggle;
         private bool _pendingClose;
+        private bool _pendingOpen;
 
         // Flip to true only while diagnosing the launcher/board toggle chain; keep false for
         // release builds so this stays quiet in the log.
         private const bool DiagLogEnabled = false;
 
-        // TEMPORARY diagnostic instrumentation requested by the user to investigate whether the
-        // Lunaris host invokes Awake twice per native [LunarisPlugin] mod and, if so, whether the
-        // second Awake produces a genuinely live, ticking second instance (two GUI.Window calls
-        // sharing one WindowId per frame) or a quickly-orphaned one. Left active by default
-        // (unlike DiagLogEnabled above) because it is needed for the next live test. Remove once
-        // the root cause is confirmed. See [ContractsInstanceDiag] log lines.
-        private static float _nextInstanceDiagTick;
+        // Duplicate-instance investigation (closed): a fresh lunaris.log confirmed exactly one live
+        // Contracts instance throughout a full session (instance hash stayed constant from Awake
+        // through OnDestroy). The per-tick Update() diagnostic that produced that evidence has been
+        // removed since it's served its purpose and was spamming the log every ~5s; the cheap
+        // Awake/OnDestroy instance-id lines below are kept in case this ever needs re-checking.
 
         private void Awake()
         {
@@ -98,8 +89,7 @@ namespace ErenshorContracts
 
             _window = new ContractBoardWindow();
             _launcher = new ContractLauncher();
-            _windowRect = ResolveInitialWindowRect();
-            _launcherRect = ResolveInitialLauncherRect();
+            InitializeRetainedUi();
 
             RegisterOrReplace(ContractCore.BuildPatrolTemplate(_patrolMinutes.Value));
             RegisterOrReplace(ContractCore.BuildRoadCheckTemplate());
@@ -109,25 +99,22 @@ namespace ErenshorContracts
             SceneManager.sceneLoaded += OnSceneLoaded;
             RebuildOffers();
 
-            _harmony = new Harmony(PluginGuid);
-            _harmony.PatchAll();
+            try { _auraProvider = new ContractsSuiteAuraProvider(this); }
+            catch (Exception ex) { Logging.LogError("Erenshor Contracts Aura provider init failed: " + ex); }
 
             Logging.LogInfo(
                 "Erenshor Contracts " + PluginVersion +
                 " loaded. Use the draggable CONTRACTS UI button. No global hotkey is registered. " +
                 "This Preview tracks local contracts but deliberately does not grant native XP, gold, or items.");
 
-            // TEMPORARY: see _nextInstanceDiagTick comment above. Proves whether Awake runs twice
-            // and, via the periodic Update tick log, whether a second instance stays alive.
-            Logging.LogInfo("[ContractsInstanceDiag] Awake instance=" +
-                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this) +
-                " harmonyPatches=" + _harmony.GetPatchedMethods().Count());
+            if (DiagLogEnabled) Logging.LogInfo("Erenshor Contracts lifecycle: Awake.");
         }
 
         private void InitializeConfigEntries()
         {
             _launcherX = new ContractsConfigEntry<float>(delegate { return _settings.LauncherX; }, delegate(float v) { _settings.LauncherX = v; });
             _launcherY = new ContractsConfigEntry<float>(delegate { return _settings.LauncherY; }, delegate(float v) { _settings.LauncherY = v; });
+            _showStandaloneLauncherWithHub = new ContractsConfigEntry<bool>(delegate { return _settings.ShowStandaloneLauncherWithHub; }, delegate(bool v) { _settings.ShowStandaloneLauncherWithHub = v; });
             _windowX = new ContractsConfigEntry<float>(delegate { return _settings.WindowX; }, delegate(float v) { _settings.WindowX = v; });
             _windowY = new ContractsConfigEntry<float>(delegate { return _settings.WindowY; }, delegate(float v) { _settings.WindowY = v; });
             _windowWidth = new ContractsConfigEntry<float>(delegate { return _settings.WindowWidth; }, delegate(float v) { _settings.WindowWidth = v; });
@@ -141,45 +128,19 @@ namespace ErenshorContracts
         {
             try
             {
-                // TEMPORARY: see _nextInstanceDiagTick comment near the top of this class. Throttled
-                // so it doesn't spam every frame; if two live instances exist, both distinct hash
-                // codes will show up across successive ticks in the log.
-                if (Time.unscaledTime >= _nextInstanceDiagTick)
-                {
-                    _nextInstanceDiagTick = Time.unscaledTime + 5f;
-                    Logging.LogInfo("[ContractsInstanceDiag] Update tick instance=" +
-                        System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this));
-                }
-
                 DrainApi();
 
-                // Apply any toggle/close requested during last frame's OnGUI passes now, before
-                // this frame's OnGUI runs, so _open is stable for every event pass in the frame.
-                if (_pendingClose)
+                if (_pendingOpen) { _pendingOpen = false; if (SuiteUiPolicy.IsGameplayReady() && !_open) OpenBoard(); }
+                if (_pendingClose) { _pendingClose = false; if (_open) CloseBoard(); }
+                if (_pendingToggle) { _pendingToggle = false; ToggleBoard(); }
+
+                bool ready = SuiteUiPolicy.IsGameplayReady();
+                if (ready) EnsureCharacter();
+                else
                 {
-                    _pendingClose = false;
                     if (_open) CloseBoard();
+                    SuiteDragHandler.ForceReleaseIfOwned();
                 }
-                if (_pendingToggle)
-                {
-                    _pendingToggle = false;
-                    if (DiagLogEnabled) Logging.LogInfo("Erenshor Contracts: toggle consumed, _open before=" + _open);
-                    ToggleBoard();
-                    if (DiagLogEnabled) Logging.LogInfo("Erenshor Contracts: toggle consumed, _open after=" + _open);
-                }
-
-                bool ready = IsLocalCharacterReady();
-                if (ready)
-                {
-                    EnsureCharacter();
-                }
-                else if (_open)
-                {
-                    CloseBoard();
-                }
-
-                if (_dirty && Time.unscaledTime >= _saveAfter) SaveNow();
-                if (_launcherDirty && Time.unscaledTime >= _launcherSaveAfter) PersistLauncherRect();
 
                 string scene = CurrentSceneName();
                 if (!string.Equals(scene, _currentZone, StringComparison.Ordinal))
@@ -198,73 +159,21 @@ namespace ErenshorContracts
                         RebuildOffers();
                     }
                 }
+
+                bool bridgeRegistered = _auraProvider != null && _auraProvider.Registered;
+                bool showLauncher = SuiteUiPolicy.ShouldShowStandaloneLauncher(
+                    bridgeRegistered,
+                    _showStandaloneLauncherWithHub != null && _showStandaloneLauncherWithHub.Value);
+                if (_launcher != null) _launcher.Tick(showLauncher, _open);
+                if (_window != null) _window.Tick(ready && _open, _currentZone, _currentOffers, _document, AcceptOffer, Abandon, Claim);
+
+                if (_dirty && Time.unscaledTime >= _saveAfter) SaveNow();
             }
             catch (Exception ex)
             {
+                try { SuiteDragHandler.ForceReleaseIfOwned(); } catch { }
                 Logging.LogError("Erenshor Contracts update failed: " + ex);
             }
-        }
-
-        private void OnGUI()
-        {
-            try
-            {
-                // UI visibility is gated on a verified player-ready signal, not a scene-name
-                // guess. IsUsableScene is still used above (Update) for legitimate zone-scoped
-                // gameplay bookkeeping only -- it is not a substitute for this check.
-                if (!IsLocalCharacterReady())
-                {
-                    if (_open) CloseBoard();
-                    return;
-                }
-
-                if (_open && _window != null && _document != null)
-                {
-                    if (DiagLogEnabled) Logging.LogInfo("Erenshor Contracts: window Draw() entry, _open=" + _open);
-                    _windowRect = ClampWindowRect(_window.Draw(
-                        _windowRect,
-                        _currentZone,
-                        _currentOffers,
-                        _document,
-                        AcceptOffer,
-                        Abandon,
-                        Claim));
-                    if (_window.RequestClose)
-                    {
-                        if (DiagLogEnabled) Logging.LogInfo("Erenshor Contracts: board requested close (deferred to Update)");
-                        _pendingClose = true;
-                    }
-                }
-
-                if (_launcher != null)
-                {
-                    Rect previous = _launcherRect;
-                    _launcherRect = ClampLauncherRect(_launcher.Draw(_launcherRect, _open));
-                    if (!RectsNearlyEqual(previous, _launcherRect)) MarkLauncherDirty();
-                    if (_launcher.RequestToggle)
-                    {
-                        if (DiagLogEnabled) Logging.LogInfo("Erenshor Contracts: launcher click detected, _open=" + _open);
-                        _pendingToggle = true;
-                        if (DiagLogEnabled) Logging.LogInfo("Erenshor Contracts: toggle queued (deferred to Update)");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Logging.LogError("Erenshor Contracts UI failed: " + ex);
-                if (_open) CloseBoard();
-            }
-        }
-
-        // True while the pointer (already converted to GUI screen-space by the caller) is over
-        // the contract board window or its launcher button. The click-passthrough Harmony
-        // patches below use this so a click on the panel cannot also drop the player's world
-        // target or spin the camera.
-        internal bool PointerIsOverUi(Vector2 guiPoint)
-        {
-            if (_open && _windowRect.Contains(guiPoint)) return true;
-            if (_launcherRect.Contains(guiPoint)) return true;
-            return false;
         }
 
         // Verified player-ready signal (not scene-name matching). Same pattern already live-
@@ -272,12 +181,7 @@ namespace ErenshorContracts
         // frame cheaply; never cached across scene loads.
         private static bool IsLocalCharacterReady()
         {
-            try
-            {
-                return !GameData.InCharSelect && GameData.PlayerControl != null && GameData.PlayerControl.Myself != null &&
-                    GameData.PlayerControl.Myself.MyStats != null && GameData.PlayerControl.Myself.gameObject.activeInHierarchy;
-            }
-            catch { return false; }
+            return SuiteUiPolicy.IsGameplayReady();
         }
 
         private static string PlayerName()
@@ -345,30 +249,23 @@ namespace ErenshorContracts
 
         private void OnDestroy()
         {
-            // TEMPORARY: see _nextInstanceDiagTick comment near the top of this class.
-            Logging.LogInfo("[ContractsInstanceDiag] OnDestroy instance=" +
-                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this));
-
+            if (DiagLogEnabled) Logging.LogInfo("Erenshor Contracts lifecycle: OnDestroy.");
+            try { if (_auraProvider != null) _auraProvider.Unregister(); } catch { }
+            _auraProvider = null;
             try { SceneManager.sceneLoaded -= OnSceneLoaded; } catch { }
-            try { ContractsCameraLookPatch.Restore(); } catch { }
             try { SaveNow(); } catch { }
-            try { PersistWindowRect(); } catch { }
-            try { PersistLauncherRect(); } catch { }
+            try { SuiteDragHandler.ForceReleaseIfOwned(); } catch { }
             try { if (_window != null) _window.Dispose(); } catch { }
             try { if (_launcher != null) _launcher.Dispose(); } catch { }
             try { if (_open) RestoreCursor(); } catch { }
-            try { if (_harmony != null) _harmony.UnpatchSelf(); } catch { }
-
-            _window = null;
-            _launcher = null;
-            _document = null;
-            _store = null;
-            _characterKey = null;
+            _window = null; _launcher = null; _document = null; _store = null; _characterKey = null;
+            SuiteUiPolicy.Reset();
             if (Instance == this) Instance = null;
         }
 
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
+            SuiteDragHandler.ForceReleaseIfOwned();
             string next = scene.name ?? string.Empty;
             if (string.Equals(next, _currentZone, StringComparison.Ordinal)) return;
             HandleTransition(_currentZone, next);
@@ -475,6 +372,23 @@ namespace ErenshorContracts
             JournalIntegration.TryAppend(text);
         }
 
+        internal bool ControlPanelOpen { get { return _open; } }
+        internal string ControlCharacterKey { get { return _characterKey ?? string.Empty; } }
+        internal string ControlZone { get { return _currentZone ?? string.Empty; } }
+        internal ContractDocument ControlDocument { get { return _document; } }
+        internal List<ContractOffer> ControlOffers { get { return new List<ContractOffer>(_currentOffers); } }
+        internal int ControlDailySlots { get { return _dailySlots == null ? 3 : Math.Max(1, Math.Min(6, _dailySlots.Value)); } }
+        internal int ControlPatrolMinutes { get { return _patrolMinutes == null ? 3 : Math.Max(1, Math.Min(60, _patrolMinutes.Value)); } }
+        internal void RequestOpenBoard() { _pendingOpen = true; }
+        internal void RequestCloseBoard() { _pendingClose = true; }
+        internal bool ControlShowStandaloneLauncher { get { return _showStandaloneLauncherWithHub != null && _showStandaloneLauncherWithHub.Value; } }
+        internal void SetShowStandaloneLauncher(bool value)
+        {
+            if (_showStandaloneLauncherWithHub != null) _showStandaloneLauncherWithHub.Value = value;
+            try { Config.Save(); } catch { }
+        }
+        internal void ResetLauncherPosition() { if (_launcher != null) _launcher.ResetPosition(); }
+
         private void ToggleBoard()
         {
             if (_open) CloseBoard();
@@ -496,7 +410,6 @@ namespace ErenshorContracts
             if (!_open) return;
             _open = false;
             SaveNow();
-            PersistWindowRect();
             RestoreCursor();
         }
 
@@ -510,12 +423,6 @@ namespace ErenshorContracts
         {
             _dirty = true;
             _saveAfter = Time.unscaledTime + 0.8f;
-        }
-
-        private void MarkLauncherDirty()
-        {
-            _launcherDirty = true;
-            _launcherSaveAfter = Time.unscaledTime + 0.8f;
         }
 
         private void SaveNow()
@@ -536,62 +443,38 @@ namespace ErenshorContracts
             }
         }
 
-        private Rect ResolveInitialWindowRect()
+        private void InitializeRetainedUi()
         {
-            float width = Mathf.Clamp(_windowWidth.Value, 540f, Mathf.Max(540f, Screen.width - 20f));
-            float height = Mathf.Clamp(_windowHeight.Value, 380f, Mathf.Max(380f, Screen.height - 20f));
-            float x = _windowX.Value < 0f ? (Screen.width - width) * 0.5f : _windowX.Value;
-            float y = _windowY.Value < 0f ? (Screen.height - height) * 0.5f : _windowY.Value;
-            return ClampWindowRect(new Rect(x, y, width, height));
+            _window.Initialize(_windowX.Value, _windowY.Value, _windowWidth.Value, _windowHeight.Value,
+                PersistWindowPosition, PersistWindowSize, RequestCloseBoard, ResetWindowPosition);
+            _launcher.Initialize(_launcherX.Value, _launcherY.Value, PersistLauncherPosition,
+                delegate { _pendingToggle = true; });
         }
 
-        private Rect ResolveInitialLauncherRect()
+        private void PersistWindowPosition(float x, float y)
         {
-            float x = _launcherX.Value < 0f ? Mathf.Max(0f, Screen.width - ContractLauncher.Width - 18f) : _launcherX.Value;
-            float y = _launcherY.Value < 0f ? Mathf.Min(Mathf.Max(8f, 168f), Mathf.Max(0f, Screen.height - ContractLauncher.Height)) : _launcherY.Value;
-            return ClampLauncherRect(new Rect(x, y, ContractLauncher.Width, ContractLauncher.Height));
+            if (_windowX == null || _windowY == null) return;
+            _windowX.Value = x; _windowY.Value = y;
+            try { Config.Save(); } catch { }
         }
 
-        private static Rect ClampWindowRect(Rect rect)
+        private void PersistWindowSize(float width, float height)
         {
-            float maxWidth = Mathf.Max(540f, Screen.width - 20f);
-            float maxHeight = Mathf.Max(380f, Screen.height - 20f);
-            rect.width = Mathf.Clamp(rect.width, 540f, maxWidth);
-            rect.height = Mathf.Clamp(rect.height, 380f, maxHeight);
-            rect.x = Mathf.Clamp(rect.x, 0f, Mathf.Max(0f, Screen.width - rect.width));
-            rect.y = Mathf.Clamp(rect.y, 0f, Mathf.Max(0f, Screen.height - rect.height));
-            return rect;
+            if (_windowWidth == null || _windowHeight == null) return;
+            if (float.IsNaN(width) || float.IsInfinity(width) || float.IsNaN(height) || float.IsInfinity(height)) return;
+            _windowWidth.Value = Mathf.Max(520f, width);
+            _windowHeight.Value = Mathf.Max(360f, height);
+            try { Config.Save(); } catch { }
         }
 
-        private static Rect ClampLauncherRect(Rect rect)
-        {
-            rect.width = ContractLauncher.Width;
-            rect.height = ContractLauncher.Height;
-            rect.x = Mathf.Clamp(rect.x, 0f, Mathf.Max(0f, Screen.width - rect.width));
-            rect.y = Mathf.Clamp(rect.y, 0f, Mathf.Max(0f, Screen.height - rect.height));
-            return rect;
-        }
-
-        private void PersistWindowRect()
-        {
-            if (_windowX == null || _windowY == null || _windowWidth == null || _windowHeight == null) return;
-            Rect rect = ClampWindowRect(_windowRect);
-            _windowX.Value = rect.x;
-            _windowY.Value = rect.y;
-            _windowWidth.Value = rect.width;
-            _windowHeight.Value = rect.height;
-            Config.Save();
-        }
-
-        private void PersistLauncherRect()
+        private void PersistLauncherPosition(float x, float y)
         {
             if (_launcherX == null || _launcherY == null) return;
-            Rect rect = ClampLauncherRect(_launcherRect);
-            _launcherX.Value = rect.x;
-            _launcherY.Value = rect.y;
-            Config.Save();
-            _launcherDirty = false;
+            _launcherX.Value = x; _launcherY.Value = y;
+            try { Config.Save(); } catch { }
         }
+
+        internal void ResetWindowPosition() { if (_window != null) _window.ResetPosition(); }
 
         private static bool IsUsableScene(string scene)
         {
@@ -611,67 +494,5 @@ namespace ErenshorContracts
             catch { return string.Empty; }
         }
 
-        private static bool RectsNearlyEqual(Rect a, Rect b)
-        {
-            return Mathf.Abs(a.x - b.x) < 0.25f &&
-                   Mathf.Abs(a.y - b.y) < 0.25f &&
-                   Mathf.Abs(a.width - b.width) < 0.25f &&
-                   Mathf.Abs(a.height - b.height) < 0.25f;
-        }
-    }
-
-    // IMGUI doesn't own the raw click Erenshor reads here, so a click on the Contracts window or
-    // its launcher would otherwise also affect the world (deselect target, move camera).
-    [HarmonyPatch(typeof(PlayerControl), "LeftClick")]
-    internal static class ContractsPanelLeftClickPatch
-    {
-        [HarmonyPrefix]
-        private static bool Prefix()
-        {
-            try
-            {
-                if (ErenshorContractsPlugin.Instance == null) return true;
-                Vector2 mouse = new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
-                return !ErenshorContractsPlugin.Instance.PointerIsOverUi(mouse);
-            }
-            catch { return true; }
-        }
-    }
-
-    [HarmonyPatch(typeof(csMouseOrbit), "LateUpdate")]
-    internal static class ContractsCameraLookPatch
-    {
-        private static csMouseOrbit _muted;
-        private static float _mutedX;
-        private static float _mutedY;
-
-        internal static void Restore()
-        {
-            csMouseOrbit orbit = _muted;
-            _muted = null;
-            if (orbit == null) return;
-            try { orbit.xSpeed = _mutedX; orbit.ySpeed = _mutedY; } catch { }
-        }
-
-        [HarmonyPrefix]
-        private static void Prefix(csMouseOrbit __instance)
-        {
-            Restore();
-            try
-            {
-                if (__instance == null || ErenshorContractsPlugin.Instance == null) return;
-                Vector2 mouse = new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
-                if (!ErenshorContractsPlugin.Instance.PointerIsOverUi(mouse)) return;
-                _mutedX = __instance.xSpeed;
-                _mutedY = __instance.ySpeed;
-                __instance.xSpeed = 0f;
-                __instance.ySpeed = 0f;
-                _muted = __instance;
-            }
-            catch { }
-        }
-
-        [HarmonyPostfix]
-        private static void Postfix() { Restore(); }
     }
 }
