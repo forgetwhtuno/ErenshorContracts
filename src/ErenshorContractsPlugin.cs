@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using Lunaris;
 using Lunaris.Config;
 using HarmonyLib;
@@ -74,6 +75,14 @@ namespace ErenshorContracts
         // release builds so this stays quiet in the log.
         private const bool DiagLogEnabled = false;
 
+        // TEMPORARY diagnostic instrumentation requested by the user to investigate whether the
+        // Lunaris host invokes Awake twice per native [LunarisPlugin] mod and, if so, whether the
+        // second Awake produces a genuinely live, ticking second instance (two GUI.Window calls
+        // sharing one WindowId per frame) or a quickly-orphaned one. Left active by default
+        // (unlike DiagLogEnabled above) because it is needed for the next live test. Remove once
+        // the root cause is confirmed. See [ContractsInstanceDiag] log lines.
+        private static float _nextInstanceDiagTick;
+
         private void Awake()
         {
             Instance = this;
@@ -107,6 +116,12 @@ namespace ErenshorContracts
                 "Erenshor Contracts " + PluginVersion +
                 " loaded. Use the draggable CONTRACTS UI button. No global hotkey is registered. " +
                 "This Preview tracks local contracts but deliberately does not grant native XP, gold, or items.");
+
+            // TEMPORARY: see _nextInstanceDiagTick comment above. Proves whether Awake runs twice
+            // and, via the periodic Update tick log, whether a second instance stays alive.
+            Logging.LogInfo("[ContractsInstanceDiag] Awake instance=" +
+                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this) +
+                " harmonyPatches=" + _harmony.GetPatchedMethods().Count());
         }
 
         private void InitializeConfigEntries()
@@ -126,6 +141,16 @@ namespace ErenshorContracts
         {
             try
             {
+                // TEMPORARY: see _nextInstanceDiagTick comment near the top of this class. Throttled
+                // so it doesn't spam every frame; if two live instances exist, both distinct hash
+                // codes will show up across successive ticks in the log.
+                if (Time.unscaledTime >= _nextInstanceDiagTick)
+                {
+                    _nextInstanceDiagTick = Time.unscaledTime + 5f;
+                    Logging.LogInfo("[ContractsInstanceDiag] Update tick instance=" +
+                        System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this));
+                }
+
                 DrainApi();
 
                 // Apply any toggle/close requested during last frame's OnGUI passes now, before
@@ -138,8 +163,9 @@ namespace ErenshorContracts
                 if (_pendingToggle)
                 {
                     _pendingToggle = false;
-                    if (DiagLogEnabled) Logging.LogInfo("Erenshor Contracts: applying deferred toggle, _open was " + _open);
+                    if (DiagLogEnabled) Logging.LogInfo("Erenshor Contracts: toggle consumed, _open before=" + _open);
                     ToggleBoard();
+                    if (DiagLogEnabled) Logging.LogInfo("Erenshor Contracts: toggle consumed, _open after=" + _open);
                 }
 
                 bool ready = IsLocalCharacterReady();
@@ -194,6 +220,7 @@ namespace ErenshorContracts
 
                 if (_open && _window != null && _document != null)
                 {
+                    if (DiagLogEnabled) Logging.LogInfo("Erenshor Contracts: window Draw() entry, _open=" + _open);
                     _windowRect = ClampWindowRect(_window.Draw(
                         _windowRect,
                         _currentZone,
@@ -216,8 +243,9 @@ namespace ErenshorContracts
                     if (!RectsNearlyEqual(previous, _launcherRect)) MarkLauncherDirty();
                     if (_launcher.RequestToggle)
                     {
-                        if (DiagLogEnabled) Logging.LogInfo("Erenshor Contracts: launcher requested toggle (deferred to Update), _open=" + _open);
+                        if (DiagLogEnabled) Logging.LogInfo("Erenshor Contracts: launcher click detected, _open=" + _open);
                         _pendingToggle = true;
+                        if (DiagLogEnabled) Logging.LogInfo("Erenshor Contracts: toggle queued (deferred to Update)");
                     }
                 }
             }
@@ -317,6 +345,10 @@ namespace ErenshorContracts
 
         private void OnDestroy()
         {
+            // TEMPORARY: see _nextInstanceDiagTick comment near the top of this class.
+            Logging.LogInfo("[ContractsInstanceDiag] OnDestroy instance=" +
+                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this));
+
             try { SceneManager.sceneLoaded -= OnSceneLoaded; } catch { }
             try { ContractsCameraLookPatch.Restore(); } catch { }
             try { SaveNow(); } catch { }
