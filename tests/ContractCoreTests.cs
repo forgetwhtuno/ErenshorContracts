@@ -6,24 +6,16 @@ internal static class ContractCoreTests
 {
     private static int _assertions;
 
-    public static int Main()
+    internal static int RunAll()
     {
-        try
-        {
-            TestStableDailyOffers();
-            TestProviderPriority();
-            TestAcceptProgressClaim();
-            TestLeaveReturn();
-            TestUniqueZoneVisit();
-            TestContextFilter();
-            Console.WriteLine("PASS Erenshor Contracts core - " + _assertions.ToString() + " assertions");
-            return 0;
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine("FAIL Erenshor Contracts core: " + ex.Message);
-            return 1;
-        }
+        _assertions = 0;
+        TestStableDailyOffers();
+        TestProviderPriority();
+        TestAcceptProgressClaim();
+        TestLeaveReturn();
+        TestUniqueZoneVisit();
+        TestContextFilter();
+        return _assertions;
     }
 
     private static void TestStableDailyOffers()

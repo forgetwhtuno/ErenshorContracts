@@ -53,6 +53,27 @@ namespace ErenshorContracts
         private float _nextBuiltinTick;
         private List<ContractOffer> _currentOffers = new List<ContractOffer>();
 
+        // Character-scoped data. No contract data is loaded until a real, spawned character is
+        // confirmed present (see IsLocalCharacterReady/EnsureCharacter) so nothing is ever read
+        // from or written to disk while sitting at the title/login/character-select screens.
+        private string _dataRoot;
+        private string _legacyDataPath;
+        private string _legacyClaimMarkerPath;
+        private string _characterKey;
+
+        // Toggle/close requests observed in OnGUI are applied in Update, never mid-OnGUI. IMGUI
+        // dispatches several event passes (Layout, input, Repaint) per rendered frame; flipping
+        // _open in the middle of that sequence desyncs GUI.Window's Layout/Repaint bookkeeping,
+        // throws, and is swallowed by OnGUI's own try/catch below -- which then force-closes the
+        // board it just opened. Deferring the mutation to Update keeps _open constant for the
+        // whole of every OnGUI pass in a given frame. See DiagLogEnabled for how this was traced.
+        private bool _pendingToggle;
+        private bool _pendingClose;
+
+        // Flip to true only while diagnosing the launcher/board toggle chain; keep false for
+        // release builds so this stays quiet in the log.
+        private const bool DiagLogEnabled = false;
+
         private void Awake()
         {
             Instance = this;
@@ -60,12 +81,11 @@ namespace ErenshorContracts
             Config.Register(ref _settings);
             InitializeConfigEntries();
 
-            string dataDirectory = Path.Combine(Path.Combine(AppContext.BaseDirectory, "plugins", "config"), "ErenshorContracts");
-            _store = new ContractStore(Path.Combine(dataDirectory, "contracts.dat"));
-            string warning;
-            _document = _store.Load(out warning);
-            if (!string.IsNullOrEmpty(warning))
-                Logging.LogWarning("Erenshor Contracts recovered from unreadable local data. " + warning);
+            _dataRoot = Path.Combine(Path.Combine(AppContext.BaseDirectory, "plugins", "config"), "ErenshorContracts");
+            _legacyDataPath = Path.Combine(_dataRoot, "contracts.dat");
+            _legacyClaimMarkerPath = _legacyDataPath + ".claimed";
+            // _store/_document/_characterKey stay null until EnsureCharacter() resolves a real
+            // player-controlled character; see IsLocalCharacterReady().
 
             _window = new ContractBoardWindow();
             _launcher = new ContractLauncher();
@@ -108,6 +128,30 @@ namespace ErenshorContracts
             {
                 DrainApi();
 
+                // Apply any toggle/close requested during last frame's OnGUI passes now, before
+                // this frame's OnGUI runs, so _open is stable for every event pass in the frame.
+                if (_pendingClose)
+                {
+                    _pendingClose = false;
+                    if (_open) CloseBoard();
+                }
+                if (_pendingToggle)
+                {
+                    _pendingToggle = false;
+                    if (DiagLogEnabled) Logging.LogInfo("Erenshor Contracts: applying deferred toggle, _open was " + _open);
+                    ToggleBoard();
+                }
+
+                bool ready = IsLocalCharacterReady();
+                if (ready)
+                {
+                    EnsureCharacter();
+                }
+                else if (_open)
+                {
+                    CloseBoard();
+                }
+
                 if (_dirty && Time.unscaledTime >= _saveAfter) SaveNow();
                 if (_launcherDirty && Time.unscaledTime >= _launcherSaveAfter) PersistLauncherRect();
 
@@ -119,7 +163,7 @@ namespace ErenshorContracts
                     RebuildOffers();
                 }
 
-                if (Time.unscaledTime >= _nextBuiltinTick)
+                if (ready && _document != null && Time.unscaledTime >= _nextBuiltinTick)
                 {
                     _nextBuiltinTick = Time.unscaledTime + 1f;
                     if (IsUsableScene(_currentZone) && ContractCore.AddZoneSeconds(_document, _currentZone, 1) > 0)
@@ -139,7 +183,10 @@ namespace ErenshorContracts
         {
             try
             {
-                if (!IsUsableScene(_currentZone))
+                // UI visibility is gated on a verified player-ready signal, not a scene-name
+                // guess. IsUsableScene is still used above (Update) for legitimate zone-scoped
+                // gameplay bookkeeping only -- it is not a substitute for this check.
+                if (!IsLocalCharacterReady())
                 {
                     if (_open) CloseBoard();
                     return;
@@ -155,7 +202,11 @@ namespace ErenshorContracts
                         AcceptOffer,
                         Abandon,
                         Claim));
-                    if (_window.RequestClose) CloseBoard();
+                    if (_window.RequestClose)
+                    {
+                        if (DiagLogEnabled) Logging.LogInfo("Erenshor Contracts: board requested close (deferred to Update)");
+                        _pendingClose = true;
+                    }
                 }
 
                 if (_launcher != null)
@@ -163,7 +214,11 @@ namespace ErenshorContracts
                     Rect previous = _launcherRect;
                     _launcherRect = ClampLauncherRect(_launcher.Draw(_launcherRect, _open));
                     if (!RectsNearlyEqual(previous, _launcherRect)) MarkLauncherDirty();
-                    if (_launcher.RequestToggle) ToggleBoard();
+                    if (_launcher.RequestToggle)
+                    {
+                        if (DiagLogEnabled) Logging.LogInfo("Erenshor Contracts: launcher requested toggle (deferred to Update), _open=" + _open);
+                        _pendingToggle = true;
+                    }
                 }
             }
             catch (Exception ex)
@@ -184,6 +239,82 @@ namespace ErenshorContracts
             return false;
         }
 
+        // Verified player-ready signal (not scene-name matching). Same pattern already live-
+        // tested in the sibling Erenshor-Nemesis mod's NemesisDirector.Ready(). Recomputed every
+        // frame cheaply; never cached across scene loads.
+        private static bool IsLocalCharacterReady()
+        {
+            try
+            {
+                return !GameData.InCharSelect && GameData.PlayerControl != null && GameData.PlayerControl.Myself != null &&
+                    GameData.PlayerControl.Myself.MyStats != null && GameData.PlayerControl.Myself.gameObject.activeInHierarchy;
+            }
+            catch { return false; }
+        }
+
+        private static string PlayerName()
+        {
+            try
+            {
+                string name = GameData.PlayerControl.Myself.MyStats.MyName;
+                return string.IsNullOrWhiteSpace(name) ? "Player" : name.Trim();
+            }
+            catch { return "Player"; }
+        }
+
+        // Two save slots can hold the same character name, so persistence keys from the verified
+        // slot index when the slot's recorded name matches the live character, and from the name
+        // alone otherwise. No Erenshor save file is written or modified by this mod.
+        private static int ResolveSlotIndex()
+        {
+            try
+            {
+                SaveGameData active = GameData.CurrentCharacterSlot != null ? GameData.CurrentCharacterSlot : GameData.ActiveSaveSlot;
+                if (active == null || active.index < 0) return -1;
+                string recorded = (active.CharName ?? string.Empty).Trim();
+                if (recorded.Length > 0 && !string.Equals(recorded, PlayerName(), StringComparison.OrdinalIgnoreCase)) return -1;
+                return active.index;
+            }
+            catch { return -1; }
+        }
+
+        private static string ResolveCharacterKey()
+        {
+            return ContractCharacterKey.Resolve(PlayerName(), ResolveSlotIndex());
+        }
+
+        // Called every frame while IsLocalCharacterReady() is true. On a resolved-key change
+        // (including the very first resolution after Awake): save+release the previous
+        // character's data, close the board so character A's contracts can never be shown while
+        // character B's data is loading, then load (or legacy-claim then load) the new
+        // character's own file and rebuild the transient offer list.
+        private void EnsureCharacter()
+        {
+            string key = ResolveCharacterKey();
+            if (string.Equals(key, _characterKey, StringComparison.Ordinal)) return;
+
+            if (_dirty) SaveNow();
+            if (_open) CloseBoard();
+            _store = null;
+            _document = null;
+
+            _characterKey = key;
+            string characterDirectory = Path.Combine(Path.Combine(_dataRoot, "Characters"), key);
+            string characterDataPath = Path.Combine(characterDirectory, "contracts.dat");
+
+            ContractStore.TryClaimLegacyData(_legacyDataPath, _legacyClaimMarkerPath, characterDataPath, key);
+
+            _store = new ContractStore(characterDataPath);
+            string warning;
+            _document = _store.Load(out warning);
+            if (!string.IsNullOrEmpty(warning))
+                Logging.LogWarning("Erenshor Contracts recovered from unreadable local data for character '" + key + "'. " + warning);
+
+            _currentOffers = new List<ContractOffer>();
+            RebuildOffers();
+            Logging.LogInfo("Erenshor Contracts: active character resolved to '" + key + "'.");
+        }
+
         private void OnDestroy()
         {
             try { SceneManager.sceneLoaded -= OnSceneLoaded; } catch { }
@@ -200,6 +331,7 @@ namespace ErenshorContracts
             _launcher = null;
             _document = null;
             _store = null;
+            _characterKey = null;
             if (Instance == this) Instance = null;
         }
 
