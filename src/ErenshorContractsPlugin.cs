@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using Lunaris;
 using Lunaris.Config;
+using HarmonyLib;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -10,12 +11,15 @@ namespace ErenshorContracts
 {
     [LunarisPlugin(PluginGuid, PluginVersion, "forgetwhtuno",
         "Local/daily contract board with a provider API for other mods to register verified objectives.")]
-    [LunarisPermission(LunarisPermission.FileAccess | LunarisPermission.Reflection)]
+    [LunarisPermission(LunarisPermission.FileAccess | LunarisPermission.Reflection | LunarisPermission.Harmony)]
     public sealed class ErenshorContractsPlugin : LunarisPlugin
     {
         internal const string PluginGuid = "forgetwhtuno.erenshor.contracts";
         internal const string PluginName = "Erenshor Contracts";
-        internal const string PluginVersion = "0.1.0";
+        internal const string PluginVersion = "0.1.1";
+
+        internal static ErenshorContractsPlugin Instance;
+        private Harmony _harmony;
 
         private readonly List<ContractTemplate> _templates = new List<ContractTemplate>();
         private readonly Dictionary<string, ContractTemplate> _templateByKey =
@@ -51,6 +55,7 @@ namespace ErenshorContracts
 
         private void Awake()
         {
+            Instance = this;
             _settings = new ContractsSettings();
             Config.Register(ref _settings);
             InitializeConfigEntries();
@@ -74,6 +79,9 @@ namespace ErenshorContracts
             _currentZone = CurrentSceneName();
             SceneManager.sceneLoaded += OnSceneLoaded;
             RebuildOffers();
+
+            _harmony = new Harmony(PluginGuid);
+            _harmony.PatchAll();
 
             Logging.LogInfo(
                 "Erenshor Contracts " + PluginVersion +
@@ -165,20 +173,34 @@ namespace ErenshorContracts
             }
         }
 
+        // True while the pointer (already converted to GUI screen-space by the caller) is over
+        // the contract board window or its launcher button. The click-passthrough Harmony
+        // patches below use this so a click on the panel cannot also drop the player's world
+        // target or spin the camera.
+        internal bool PointerIsOverUi(Vector2 guiPoint)
+        {
+            if (_open && _windowRect.Contains(guiPoint)) return true;
+            if (_launcherRect.Contains(guiPoint)) return true;
+            return false;
+        }
+
         private void OnDestroy()
         {
             try { SceneManager.sceneLoaded -= OnSceneLoaded; } catch { }
+            try { ContractsCameraLookPatch.Restore(); } catch { }
             try { SaveNow(); } catch { }
             try { PersistWindowRect(); } catch { }
             try { PersistLauncherRect(); } catch { }
             try { if (_window != null) _window.Dispose(); } catch { }
             try { if (_launcher != null) _launcher.Dispose(); } catch { }
             try { if (_open) RestoreCursor(); } catch { }
+            try { if (_harmony != null) _harmony.UnpatchSelf(); } catch { }
 
             _window = null;
             _launcher = null;
             _document = null;
             _store = null;
+            if (Instance == this) Instance = null;
         }
 
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
@@ -432,5 +454,60 @@ namespace ErenshorContracts
                    Mathf.Abs(a.width - b.width) < 0.25f &&
                    Mathf.Abs(a.height - b.height) < 0.25f;
         }
+    }
+
+    // IMGUI doesn't own the raw click Erenshor reads here, so a click on the Contracts window or
+    // its launcher would otherwise also affect the world (deselect target, move camera).
+    [HarmonyPatch(typeof(PlayerControl), "LeftClick")]
+    internal static class ContractsPanelLeftClickPatch
+    {
+        [HarmonyPrefix]
+        private static bool Prefix()
+        {
+            try
+            {
+                if (ErenshorContractsPlugin.Instance == null) return true;
+                Vector2 mouse = new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
+                return !ErenshorContractsPlugin.Instance.PointerIsOverUi(mouse);
+            }
+            catch { return true; }
+        }
+    }
+
+    [HarmonyPatch(typeof(csMouseOrbit), "LateUpdate")]
+    internal static class ContractsCameraLookPatch
+    {
+        private static csMouseOrbit _muted;
+        private static float _mutedX;
+        private static float _mutedY;
+
+        internal static void Restore()
+        {
+            csMouseOrbit orbit = _muted;
+            _muted = null;
+            if (orbit == null) return;
+            try { orbit.xSpeed = _mutedX; orbit.ySpeed = _mutedY; } catch { }
+        }
+
+        [HarmonyPrefix]
+        private static void Prefix(csMouseOrbit __instance)
+        {
+            Restore();
+            try
+            {
+                if (__instance == null || ErenshorContractsPlugin.Instance == null) return;
+                Vector2 mouse = new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
+                if (!ErenshorContractsPlugin.Instance.PointerIsOverUi(mouse)) return;
+                _mutedX = __instance.xSpeed;
+                _mutedY = __instance.ySpeed;
+                __instance.xSpeed = 0f;
+                __instance.ySpeed = 0f;
+                _muted = __instance;
+            }
+            catch { }
+        }
+
+        [HarmonyPostfix]
+        private static void Postfix() { Restore(); }
     }
 }
