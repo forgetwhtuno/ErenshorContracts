@@ -31,3 +31,11 @@
 - Added optional Erenshor Journal Chronicle integration.
 - Added deterministic core tests.
 - Deliberately deferred native XP/gold/item rewards and kill/inventory hooks until verified against the installed game assembly.
+
+
+## Unreleased - Suite UI/API coherence handoff
+
+- Added optional, versioned `ContractsControlApi` discovery/control surface for Suite Hub without a hard Hub dependency.
+- Kept standalone commands and core gameplay authority intact.
+- Documented the retained panel/launcher policy and Lunaris live-test requirement.
+- Strengthened fully-in-world gating, made the launcher Hub-aware fallback-only, and added panel Reset Position / whole-drag input capture.
