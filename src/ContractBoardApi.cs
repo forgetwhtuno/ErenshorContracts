@@ -6,15 +6,18 @@ namespace ErenshorContracts
     /// <summary>
     /// Reflection-friendly optional integration surface.
     ///
-    /// Companion mods can register daily contract templates and report verified progress
+    /// Companion mods can register local contract templates and report verified progress
     /// without taking a hard compile-time dependency on Erenshor Contracts.
     ///
-    /// This API never grants rewards and never infers game state. The provider is responsible
+    /// This provider API never grants rewards and never infers game state. Registered provider templates remain record-only in v1 because Contracts cannot infer their effort/balance. The provider is responsible
     /// for only reporting events it actually verified.
     /// </summary>
     public static class ContractBoardApi
     {
         public const int ContractVersion = 1;
+        private static bool RuntimeAvailable;
+        public static bool IsAvailable { get { lock (Sync) { return RuntimeAvailable; } } }
+
         private const int MaximumQueuedTemplates = 256;
         private const int MaximumQueuedProgress = 512;
 
@@ -35,6 +38,7 @@ namespace ErenshorContracts
             int priority,
             string rewardText)
         {
+            if (!IsAvailable) return false;
             if (string.IsNullOrWhiteSpace(providerId) ||
                 string.IsNullOrWhiteSpace(templateId) ||
                 string.IsNullOrWhiteSpace(title) ||
@@ -44,17 +48,17 @@ namespace ErenshorContracts
                 return false;
 
             ContractTemplateRegistration value = new ContractTemplateRegistration();
-            value.ProviderId = providerId.Trim();
-            value.TemplateId = templateId.Trim();
-            value.ZoneScope = string.IsNullOrWhiteSpace(zoneScope) ? "*" : zoneScope.Trim();
-            value.Title = title.Trim();
-            value.Description = description == null ? string.Empty : description.Trim();
-            value.ProgressChannel = progressChannel.Trim();
-            value.ProgressKey = progressKey.Trim();
-            value.ContextFilter = contextFilter == null ? string.Empty : contextFilter.Trim();
+            value.ProviderId = Bound(providerId, 64);
+            value.TemplateId = Bound(templateId, 64);
+            value.ZoneScope = string.IsNullOrWhiteSpace(zoneScope) ? "*" : Bound(zoneScope, 96);
+            value.Title = Bound(title, 120);
+            value.Description = Bound(description, 320);
+            value.ProgressChannel = Bound(progressChannel, 64);
+            value.ProgressKey = Bound(progressKey, 64);
+            value.ContextFilter = Bound(contextFilter, 160);
             value.Target = Math.Max(1, Math.Min(1000000, target));
             value.Priority = Math.Max(-1000, Math.Min(1000, priority));
-            value.RewardText = rewardText == null ? string.Empty : rewardText.Trim();
+            value.RewardText = Bound(rewardText, 200);
 
             lock (Sync)
             {
@@ -66,14 +70,15 @@ namespace ErenshorContracts
 
         public static bool ReportProgress(string channel, string key, int amount, string context)
         {
+            if (!IsAvailable) return false;
             if (string.IsNullOrWhiteSpace(channel) || string.IsNullOrWhiteSpace(key) || amount <= 0)
                 return false;
 
             ContractProgressReport value = new ContractProgressReport();
-            value.Channel = channel.Trim();
-            value.Key = key.Trim();
+            value.Channel = Bound(channel, 64);
+            value.Key = Bound(key, 64);
             value.Amount = Math.Max(1, Math.Min(1000000, amount));
-            value.Context = context == null ? string.Empty : context.Trim();
+            value.Context = Bound(context, 512);
 
             lock (Sync)
             {
@@ -81,6 +86,13 @@ namespace ErenshorContracts
                 Progress.Enqueue(value);
             }
             return true;
+        }
+
+        private static string Bound(string value, int maxLength)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+            string clean = value.Replace('\r', ' ').Replace('\n', ' ').Trim();
+            return clean.Length <= maxLength ? clean : clean.Substring(0, maxLength);
         }
 
         internal static bool TryDequeueTemplate(out ContractTemplateRegistration value)
@@ -109,6 +121,24 @@ namespace ErenshorContracts
                 value = Progress.Dequeue();
                 return true;
             }
+        }
+
+        internal static void SetRuntimeAvailable(bool available)
+        {
+            lock (Sync)
+            {
+                RuntimeAvailable = available;
+                if (!available)
+                {
+                    Templates.Clear();
+                    Progress.Clear();
+                }
+            }
+        }
+
+        internal static void ResetRuntimeState()
+        {
+            SetRuntimeAvailable(false);
         }
     }
 }

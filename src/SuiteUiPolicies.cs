@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 
 namespace ErenshorContracts
 {
@@ -8,6 +9,68 @@ namespace ErenshorContracts
         internal static bool ShouldShow(bool gameplayReady, bool hubUsable, bool bridgeRegistered, bool explicitlyVisibleWithHub)
         {
             return gameplayReady && (explicitlyVisibleWithHub || !hubUsable || !bridgeRegistered);
+        }
+    }
+
+
+    // Exact module-owned wire record for the Hub Basic setting. Keeping this pure makes the
+    // Contracts side of the Suite contract deterministic and testable without Lunaris.
+    internal static class ContractsSuiteWirePolicy
+    {
+        internal static string BuildBasicSettings(bool showLauncher)
+        {
+            return "id=showLauncher&label=Show%20Contracts%20Launcher&tier=basic&type=bool&value="
+                + (showLauncher ? "true" : "false") + "&mutable=true";
+        }
+    }
+
+    // Launcher fallback follows actual retained-Hub availability, not a manual validation flag.
+    // The Contracts launcher may honor its Show Launcher preference only while the Hub says it is
+    // Ready and its retained UI is actually built. Missing/malformed/unavailable presence fails
+    // safe to the standalone launcher. interactionValidated remains diagnostic metadata only.
+    internal static class SuiteHubPresencePolicy
+    {
+        internal static bool IsUsable(string payload)
+        {
+            if (string.IsNullOrEmpty(payload) || payload.Length > 2048) return false;
+            string protocol = null;
+            string module = null;
+            string status = null;
+            string uiAvailable = null;
+            string[] fields = payload.Split('&');
+            for (int i = 0; i < fields.Length; i++)
+            {
+                int equals = fields[i].IndexOf('=');
+                if (equals <= 0) return false;
+                string key = fields[i].Substring(0, equals);
+                string value = fields[i].Substring(equals + 1);
+                if (key == "protocol") { if (protocol != null) return false; protocol = value; }
+                else if (key == "module") { if (module != null) return false; module = value; }
+                else if (key == "status") { if (status != null) return false; status = value; }
+                else if (key == "uiAvailable") { if (uiAvailable != null) return false; uiAvailable = value; }
+            }
+            return string.Equals(protocol, "1", StringComparison.Ordinal)
+                && string.Equals(module, "suitehub", StringComparison.Ordinal)
+                && string.Equals(status, "Ready", StringComparison.Ordinal)
+                && string.Equals(uiAvailable, "true", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    // Pure formatter for the optional centralized quick-close endpoint. Keeping the validation and
+    // invariant-culture number formatting outside Unity makes the module half of the contract easy
+    // to test without a game runtime.
+    internal static class SuiteUiStatePolicy
+    {
+        internal static string Build(string moduleId, bool open, int sortOrder, double activated)
+        {
+            if (string.IsNullOrEmpty(moduleId)) return string.Empty;
+            if (sortOrder < -10000) sortOrder = -10000;
+            if (sortOrder > 10000) sortOrder = 10000;
+            if (double.IsNaN(activated) || double.IsInfinity(activated) || activated < 0d) activated = 0d;
+            return "protocol=1&module=" + moduleId
+                + "&open=" + (open ? "true" : "false")
+                + "&closeable=true&sortOrder=" + sortOrder.ToString(CultureInfo.InvariantCulture)
+                + "&activated=" + activated.ToString("0.###", CultureInfo.InvariantCulture);
         }
     }
 
@@ -65,6 +128,70 @@ namespace ErenshorContracts
         internal void ForceRelease() { IsActive = false; }
     }
 
+    internal static class SuiteCameraOwnershipPolicy
+    {
+        internal static bool PromoteUsingUi(bool nativeResult, bool contractsOwnsGesture)
+        {
+            return nativeResult || contractsOwnsGesture;
+        }
+
+        internal static string CollapseGlyph(bool collapsed)
+        {
+            return collapsed ? "▼" : "▲";
+        }
+    }
+
+
+    // Shared window-chrome geometry for the dedicated retained panels in this standalone mod.
+    // Keep this Unity-free so collapse/containment behavior is testable without Erenshor.
+    internal static class SuiteWindowChromePolicy
+    {
+        internal const float HeaderHeight = 32f;
+        internal const float CollapsedHeight = 32f;
+        internal const float NormalRowHeight = 26f;
+        internal const float RowSpacing = 3f;
+        internal const float SectionSpacing = 6f;
+
+        internal static float ResolveDisplayHeight(bool collapsed, float expandedHeight, float minimumExpandedHeight)
+        {
+            if (collapsed) return CollapsedHeight;
+            if (!SuiteUiPositionPolicy.IsFinite(expandedHeight)) expandedHeight = minimumExpandedHeight;
+            if (!SuiteUiPositionPolicy.IsFinite(minimumExpandedHeight) || minimumExpandedHeight < CollapsedHeight)
+                minimumExpandedHeight = CollapsedHeight;
+            return Math.Max(minimumExpandedHeight, expandedHeight);
+        }
+
+        internal static float PreserveTopBottomY(float currentBottomY, float oldHeight, float newHeight)
+        {
+            if (!SuiteUiPositionPolicy.IsFinite(currentBottomY)) currentBottomY = 0f;
+            if (!SuiteUiPositionPolicy.IsFinite(oldHeight) || oldHeight < 0f) oldHeight = 0f;
+            if (!SuiteUiPositionPolicy.IsFinite(newHeight) || newHeight < 0f) newHeight = 0f;
+            return currentBottomY + oldHeight - newHeight;
+        }
+
+        internal static float ClampOrigin(float origin, float screenExtent, float panelExtent)
+        {
+            if (!SuiteUiPositionPolicy.IsFinite(origin)) origin = 0f;
+            if (!SuiteUiPositionPolicy.IsFinite(screenExtent) || screenExtent < 0f) screenExtent = 0f;
+            if (!SuiteUiPositionPolicy.IsFinite(panelExtent) || panelExtent < 0f) panelExtent = 0f;
+            return SuiteUiPositionPolicy.Clamp(origin, 0f, Math.Max(0f, screenExtent - panelExtent));
+        }
+
+        internal static bool ShouldRebuildStructure(string previousSignature, string nextSignature)
+        {
+            return !string.Equals(previousSignature ?? string.Empty, nextSignature ?? string.Empty, StringComparison.Ordinal);
+        }
+
+        internal static bool IsCompactGeometryValid()
+        {
+            return HeaderHeight >= 28f && HeaderHeight <= 32f
+                && NormalRowHeight >= 24f && NormalRowHeight <= 29f
+                && RowSpacing >= 3f && RowSpacing <= 5f
+                && SectionSpacing >= 6f && SectionSpacing <= 12f
+                && CollapsedHeight == HeaderHeight;
+        }
+    }
+
     internal static class SuiteUiPositionPolicy
     {
         internal const float Unset = -1f;
@@ -109,11 +236,22 @@ namespace ErenshorContracts
 
         internal static string RunSelfTests()
         {
+            if (ContractsSuiteWirePolicy.BuildBasicSettings(false) != "id=showLauncher&label=Show%20Contracts%20Launcher&tier=basic&type=bool&value=false&mutable=true") return "FAIL contracts basic setting false wire";
+            if (ContractsSuiteWirePolicy.BuildBasicSettings(true) != "id=showLauncher&label=Show%20Contracts%20Launcher&tier=basic&type=bool&value=true&mutable=true") return "FAIL contracts basic setting true wire";
             if (LauncherVisibilityPolicy.ShouldShow(false, false, false, false)) return "FAIL launcher visible before gameplay ready";
             if (!LauncherVisibilityPolicy.ShouldShow(true, false, true, false)) return "FAIL launcher hidden without Hub";
             if (!LauncherVisibilityPolicy.ShouldShow(true, true, false, false)) return "FAIL launcher hidden when module bridge unavailable";
             if (LauncherVisibilityPolicy.ShouldShow(true, true, true, false)) return "FAIL launcher visible with usable Hub when setting off";
             if (!LauncherVisibilityPolicy.ShouldShow(true, true, true, true)) return "FAIL explicit launcher setting ignored";
+            if (!SuiteHubPresencePolicy.IsUsable("protocol=1&module=suitehub&status=Ready&uiAvailable=true&interactionValidated=false&quickClose=0")) return "FAIL usable Hub presence rejected";
+            if (SuiteHubPresencePolicy.IsUsable("protocol=1&module=suitehub&status=Ready&uiAvailable=false")) return "FAIL unavailable Hub UI accepted";
+            if (SuiteHubPresencePolicy.IsUsable("protocol=1&module=suitehub&status=Ready")) return "FAIL missing Hub UI availability accepted";
+            if (SuiteHubPresencePolicy.IsUsable("protocol=1&module=suitehub&status=NotReady&uiAvailable=true")) return "FAIL not-ready Hub accepted";
+            if (SuiteHubPresencePolicy.IsUsable("protocol=1&module=suitehub&status=Ready&uiAvailable=true&status=Ready")) return "FAIL duplicate Hub field accepted";
+            if (SuiteHubPresencePolicy.IsUsable("protocol=1&module=suitehub&status=Ready&uiAvailable=true&uiAvailable=true")) return "FAIL duplicate UI availability field accepted";
+            string uiState = SuiteUiStatePolicy.Build("contracts", true, 521, 12.5d);
+            if (uiState != "protocol=1&module=contracts&open=true&closeable=true&sortOrder=521&activated=12.5") return "FAIL ui.state formatting";
+            if (SuiteUiStatePolicy.Build("contracts", false, 50000, double.NaN).IndexOf("sortOrder=10000&activated=0", StringComparison.Ordinal) < 0) return "FAIL ui.state bounds";
             if (InterpretStoredAxis(float.NaN) != Unset) return "FAIL NaN storage accepted";
             if (InterpretStoredAxis(float.PositiveInfinity) != Unset) return "FAIL infinite storage accepted";
             if (InterpretStoredAxis(500f) != Unset) return "FAIL legacy pixel storage accepted as normalized";
@@ -140,6 +278,15 @@ namespace ErenshorContracts
             gesture.Begin();
             gesture.ForceRelease();
             if (gesture.IsActive) return "FAIL gesture force release";
+            if (SuiteWindowChromePolicy.ShouldRebuildStructure("same", "same")) return "FAIL dynamic text requires structural rebuild";
+            if (!SuiteWindowChromePolicy.ShouldRebuildStructure("old", "new")) return "FAIL structural change not detected";
+            if (!SuiteWindowChromePolicy.IsCompactGeometryValid()) return "FAIL compact chrome geometry";
+            if (Math.Abs(SuiteWindowChromePolicy.ResolveDisplayHeight(true, 480f, 320f) - 32f) > 0.001f) return "FAIL collapsed height";
+            if (Math.Abs(SuiteWindowChromePolicy.ResolveDisplayHeight(false, 480f, 320f) - 480f) > 0.001f) return "FAIL expanded height";
+            if (Math.Abs(SuiteWindowChromePolicy.ResolveDisplayHeight(false, 200f, 320f) - 320f) > 0.001f) return "FAIL expanded minimum height";
+            if (Math.Abs(SuiteWindowChromePolicy.PreserveTopBottomY(100f, 400f, 32f) - 468f) > 0.001f) return "FAIL collapse top preservation";
+            if (Math.Abs(SuiteWindowChromePolicy.PreserveTopBottomY(468f, 32f, 400f) - 100f) > 0.001f) return "FAIL expand top restoration";
+            if (Math.Abs(SuiteWindowChromePolicy.ClampOrigin(900f, 1000f, 320f) - 680f) > 0.001f) return "FAIL panel containment clamp";
             return "PASS suite ui policies";
         }
     }

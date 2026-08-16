@@ -15,12 +15,23 @@ $csc = Find-Csc
 $out = Join-Path $env:TEMP "ErenshorContractsCoreTests.exe"
 & $csc /nologo /target:exe /out:$out `
     (Join-Path $ScriptRoot "src\ContractModels.cs") `
+    (Join-Path $ScriptRoot "src\ContractRewardPolicy.cs") `
+    (Join-Path $ScriptRoot "src\ContractRewardAuthorityPolicy.cs") `
+    (Join-Path $ScriptRoot "src\ContractEnemyEligibilityPolicy.cs") `
+    (Join-Path $ScriptRoot "src\ContractCombatPolicy.cs") `
+    (Join-Path $ScriptRoot "src\ContractKillCreditPolicy.cs") `
     (Join-Path $ScriptRoot "src\ContractCore.cs") `
     (Join-Path $ScriptRoot "src\ContractStore.cs") `
     (Join-Path $ScriptRoot "src\ContractCharacterKey.cs") `
+    (Join-Path $ScriptRoot "src\ContractBoardApi.cs") `
+    (Join-Path $ScriptRoot "src\ContractJournalQueue.cs") `
     (Join-Path $ScriptRoot "tests\ContractCoreTests.cs") `
+    (Join-Path $ScriptRoot "tests\ContractCombatPolicyTests.cs") `
     (Join-Path $ScriptRoot "tests\ContractCharacterKeyTests.cs") `
     (Join-Path $ScriptRoot "tests\ContractStoreTests.cs") `
+    (Join-Path $ScriptRoot "tests\ContractJournalQueueTests.cs") `
+    (Join-Path $ScriptRoot "tests\ContractBoardApiTests.cs") `
+    (Join-Path $ScriptRoot "tests\ContractRewardPolicyTests.cs") `
     (Join-Path $ScriptRoot "tests\TestRunner.cs")
 if ($LASTEXITCODE -ne 0) { throw "Contracts core tests did not compile." }
 & $out

@@ -47,6 +47,8 @@ namespace ErenshorContracts
             if (le != null) UnityEngine.Object.DestroyImmediate(le);
             _label = button.GetComponentInChildren<TextMeshProUGUI>();
 
+            RetainedUiKit.AddFrame(_panel, 1f);
+
             _position = new RetainedPosition(storedX, storedY, 0.86f, 0.82f, persist);
             SuiteDragHandler drag = grip.gameObject.AddComponent<SuiteDragHandler>();
             drag.Target = _panel;

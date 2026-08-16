@@ -14,6 +14,11 @@ internal static class ContractCharacterKeyTests
         assertions += TestResolveFallsBackToNameOnly();
         assertions += TestDistinctCharactersResolveToDistinctKeys();
         assertions += TestSameNameDifferentSlotsAreDistinct();
+        assertions += TestAmbiguousSameNameFailsClosedWithoutSlot();
+        assertions += TestUnknownNameMultiplicityFailsClosedWithoutSlot();
+        assertions += TestUniqueNameMayUseFallbackWithoutSlot();
+        assertions += TestSanitizedNameCollisionFailsClosed();
+        assertions += TestBlankNameFailsClosed();
         return assertions;
     }
 
@@ -56,6 +61,41 @@ internal static class ContractCharacterKeyTests
         string keyA = ContractCharacterKey.Resolve("Aldric", 0);
         string keyB = ContractCharacterKey.Resolve("Aldric", 1);
         NotEqual(keyA, keyB, "same name in different slots still resolves to distinct keys");
+        return 1;
+    }
+
+    private static int TestAmbiguousSameNameFailsClosedWithoutSlot()
+    {
+        Equal(string.Empty, ContractCharacterKey.ResolveStrict("Aldric", -1, 2, 2),
+            "proven duplicate name cannot use a shared name-only sidecar");
+        return 1;
+    }
+
+    private static int TestUnknownNameMultiplicityFailsClosedWithoutSlot()
+    {
+        Equal(string.Empty, ContractCharacterKey.ResolveStrict("Aldric", -1, 0, 0),
+            "unverified save-slot name multiplicity cannot use a name-only sidecar");
+        return 1;
+    }
+
+    private static int TestUniqueNameMayUseFallbackWithoutSlot()
+    {
+        Equal("aldric", ContractCharacterKey.ResolveStrict("Aldric", -1, 1, 1),
+            "unique save-slot name may use the proven legacy fallback when slot index is unavailable");
+        return 1;
+    }
+
+    private static int TestSanitizedNameCollisionFailsClosed()
+    {
+        Equal(string.Empty, ContractCharacterKey.ResolveStrict("A-B", -1, 1, 2),
+            "sanitized name collision cannot share a name-only sidecar");
+        return 1;
+    }
+
+    private static int TestBlankNameFailsClosed()
+    {
+        Equal(string.Empty, ContractCharacterKey.ResolveStrict("", 0, 0, 0),
+            "blank live name cannot create a slot-player sidecar");
         return 1;
     }
 

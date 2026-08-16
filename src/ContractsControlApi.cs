@@ -7,6 +7,7 @@ namespace ErenshorContracts
     {
         public string Id;
         public string Title;
+        public string Category;
         public string State;
         public int Progress;
         public int Target;
@@ -19,6 +20,8 @@ namespace ErenshorContracts
         public string Zone;
         public bool PanelOpen;
         public int CompletedCount;
+        public int LocalRows;
+        public int GlobalRows;
         public List<ContractControlRow> Contracts = new List<ContractControlRow>();
     }
 
@@ -28,11 +31,14 @@ namespace ErenshorContracts
         public const string ModuleId = "contracts";
         public static bool HasDedicatedPanel { get { return true; } }
         public static bool IsPanelOpen { get { return ErenshorContractsPlugin.Instance != null && ErenshorContractsPlugin.Instance.ControlPanelOpen; } }
+
         public static string GetStatus()
         {
             ContractsControlState s = GetBasicState();
-            return s.GameplayReady ? s.Contracts.Count + " contract row(s) in " + (string.IsNullOrEmpty(s.Zone) ? "current zone" : s.Zone) + "." : "Not fully in world.";
+            if (!s.GameplayReady) return "Not fully in world.";
+            return s.LocalRows.ToString() + " local, " + s.GlobalRows.ToString() + " global contract row(s).";
         }
+
         public static ContractsControlState GetBasicState()
         {
             ContractsControlState state = new ContractsControlState();
@@ -49,19 +55,32 @@ namespace ErenshorContracts
             {
                 ContractOffer offer = offers[i]; if (offer == null || offer.Template == null) continue;
                 ContractControlRow row = new ContractControlRow();
-                row.Id = offer.OccurrenceId; row.Title = offer.Template.Title;
-                if (offer.Claimed) row.State = "completed";
-                else if (offer.Active != null) { row.State = offer.Active.IsComplete ? "ready_to_claim" : "active"; row.Progress = offer.Active.Progress; row.Target = offer.Active.Target; }
+                row.Id = offer.OccurrenceId;
+                row.Title = offer.Template.Title;
+                row.Category = ContractCategory.Normalize(offer.Template.Category);
+                if (string.Equals(row.Category, ContractCategory.Global, StringComparison.Ordinal)) state.GlobalRows++;
+                else state.LocalRows++;
+
+                if (offer.RewardLocked) row.State = "reward_locked";
+                else if (offer.RewardRetryable) row.State = "reward_retryable";
+                else if (offer.Claimed) row.State = "completed";
+                else if (offer.Active != null)
+                {
+                    row.State = offer.Active.IsComplete ? "ready_to_claim" : "active";
+                    row.Progress = offer.Active.Progress;
+                    row.Target = offer.Active.Target;
+                }
                 else row.State = "available";
                 state.Contracts.Add(row);
             }
             return state;
         }
-        public static bool OpenPanel() { var p = ErenshorContractsPlugin.Instance; if (p == null || !SuiteUiPolicy.IsGameplayReady()) return false; p.RequestOpenBoard(); return true; }
-        public static bool ClosePanel() { var p = ErenshorContractsPlugin.Instance; if (p == null) return false; p.RequestCloseBoard(); return true; }
-        public static bool GetShowLauncher() { var p = ErenshorContractsPlugin.Instance; return p != null && p.ControlShowStandaloneLauncher; }
-        public static bool SetShowLauncher(bool visible) { var p = ErenshorContractsPlugin.Instance; if (p == null) return false; p.SetShowStandaloneLauncher(visible); return true; }
-        public static bool ResetPanelPosition() { var p = ErenshorContractsPlugin.Instance; if (p == null) return false; p.ResetWindowPosition(); return true; }
-        public static bool ResetLauncherPosition() { var p = ErenshorContractsPlugin.Instance; if (p == null) return false; p.ResetLauncherPosition(); return true; }
+
+        public static bool OpenPanel() { ErenshorContractsPlugin p = ErenshorContractsPlugin.Instance; if (p == null || !SuiteUiPolicy.IsGameplayReady()) return false; p.RequestOpenBoard(); return true; }
+        public static bool ClosePanel() { ErenshorContractsPlugin p = ErenshorContractsPlugin.Instance; if (p == null) return false; p.RequestCloseBoard(); return true; }
+        public static bool GetShowLauncher() { ErenshorContractsPlugin p = ErenshorContractsPlugin.Instance; return p != null && p.ControlShowStandaloneLauncher; }
+        public static bool SetShowLauncher(bool visible) { ErenshorContractsPlugin p = ErenshorContractsPlugin.Instance; if (p == null) return false; p.SetShowStandaloneLauncher(visible); return true; }
+        public static bool ResetPanelPosition() { ErenshorContractsPlugin p = ErenshorContractsPlugin.Instance; if (p == null) return false; p.ResetWindowPosition(); return true; }
+        public static bool ResetLauncherPosition() { ErenshorContractsPlugin p = ErenshorContractsPlugin.Instance; if (p == null) return false; p.ResetLauncherPosition(); return true; }
     }
 }
