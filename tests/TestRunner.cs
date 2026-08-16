@@ -8,8 +8,12 @@ internal static class TestRunner
         {
             int assertions = 0;
             assertions += ContractCoreTests.RunAll();
+            assertions += ContractCombatPolicyTests.RunAll();
             assertions += ContractCharacterKeyTests.RunAll();
             assertions += ContractStoreTests.RunAll();
+            assertions += ContractJournalQueueTests.RunAll();
+            assertions += ContractBoardApiTests.RunAll();
+            assertions += ContractRewardPolicyTests.RunAll();
             Console.WriteLine("PASS Erenshor Contracts test suite - " + assertions.ToString() + " assertions");
             return 0;
         }

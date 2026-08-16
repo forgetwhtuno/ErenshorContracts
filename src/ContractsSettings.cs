@@ -48,13 +48,29 @@ namespace ErenshorContracts
         [Config("WindowHeight", "UI", "Contracts window height in pixels.")]
         public float WindowHeight = 540f;
 
-        [Config("DailySlots", "Contracts", "Number of deterministic daily contracts offered in each scene, clamped to 1-6.")]
+        // Retain the old key for config compatibility; it is now explicitly the local-board slot count.
+        [Config("DailySlots", "Contracts", "Number of deterministic local contracts offered for the current Local board origin, clamped to 1-6.")]
         public int DailySlots = 3;
 
-        [Config("PatrolMinutes", "Contracts", "Minutes required by the built-in Local Patrol fallback, clamped to 1-60.")]
-        public int PatrolMinutes = 3;
+        [Config("GlobalSlots", "Contracts", "Number of deterministic global contracts offered across zones, clamped to 1-3.")]
+        public int GlobalSlots = 2;
 
-        [Config("ProfileKey", "Contracts", "Local sidecar profile key used to keep daily rotation stable. Change it only if you intentionally want a separate Contracts profile.")]
+        [Config("PatrolMinutes", "Contracts", "Minutes required by the built-in Local Patrol, clamped to 5-60. Default 15.")]
+        public int PatrolMinutes = 15;
+
+        [Config("GlobalPatrolMinutes", "Contracts", "Active-play minutes required by Long Watch, clamped to 30-120. Default 60.")]
+        public int GlobalPatrolMinutes = 60;
+
+        [Config("LocalRefreshMinutes", "Contracts", "Active-play minutes between local board refresh opportunities, clamped to 15-240. Default 45.")]
+        public int LocalRefreshMinutes = 45;
+
+        [Config("GlobalRefreshMinutes", "Contracts", "Active-play minutes between global board refresh opportunities, clamped to 60-480. Default 120.")]
+        public int GlobalRefreshMinutes = 120;
+
+        [Config("EnableNativeXpRewards", "Contracts", "Compatibility gate for verified direct personal XP rewards. Default true: contracts defer the entire claim while a raid is active.")]
+        public bool EnableNativeXpRewards = true;
+
+        [Config("ProfileKey", "Contracts", "Local sidecar profile key used to keep board rotation stable. Change it only if you intentionally want a separate Contracts profile.")]
         public string ProfileKey = "local";
     }
 }

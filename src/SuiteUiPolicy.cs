@@ -1,5 +1,6 @@
 using System;
 using Lunaris;
+using Lunaris.IPC;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -11,7 +12,7 @@ namespace ErenshorContracts
     {
         private const float StableReadySeconds = 1.0f;
         private const float HubProbeSeconds = 1.0f;
-        private const string HubPluginTypeName = "ErenshorSuiteHub.ErenshorSuiteHubPlugin";
+        private const string HubPresenceEndpoint = "forgetwhtuno.erenshor.suitehub.v1.describe";
 
         private static float _rawReadySince = -1f;
         private static int _readySceneHandle = int.MinValue;
@@ -19,6 +20,7 @@ namespace ErenshorContracts
         private static bool _acquired;
         private static float _nextHubProbe;
         private static bool _hubAvailable;
+        private static IAuraSubscriber<string> _hubPresence;
 
         internal static bool IsGameplayReady()
         {
@@ -64,6 +66,16 @@ namespace ErenshorContracts
                 IsGameplayReady(), IsHubAvailable(), bridgeRegistered, explicitlyVisibleWithHub);
         }
 
+        internal static void InitializeHubPresence(LunarisPlugin owner)
+        {
+            _hubPresence = null;
+            _hubAvailable = false;
+            _nextHubProbe = 0f;
+            if (owner == null) return;
+            try { _hubPresence = owner.IPCAuraSubscriber<string>(HubPresenceEndpoint); }
+            catch { _hubPresence = null; }
+        }
+
         internal static bool IsHubAvailable()
         {
             if (Time.unscaledTime < _nextHubProbe) return _hubAvailable;
@@ -71,18 +83,8 @@ namespace ErenshorContracts
             _hubAvailable = false;
             try
             {
-                LunarisPlugin[] plugins = UnityEngine.Object.FindObjectsOfType<LunarisPlugin>();
-                for (int i = 0; i < plugins.Length; i++)
-                {
-                    LunarisPlugin plugin = plugins[i];
-                    if (plugin == null) continue;
-                    Type type = plugin.GetType();
-                    if (type != null && string.Equals(type.FullName, HubPluginTypeName, StringComparison.Ordinal))
-                    {
-                        _hubAvailable = true;
-                        break;
-                    }
-                }
+                if (_hubPresence == null || !_hubPresence.HasFunction) return false;
+                _hubAvailable = SuiteHubPresencePolicy.IsUsable(_hubPresence.InvokeFunc());
             }
             catch
             {
@@ -99,6 +101,7 @@ namespace ErenshorContracts
             _acquired = false;
             _nextHubProbe = 0f;
             _hubAvailable = false;
+            _hubPresence = null;
         }
 
         private static bool RawGameplayReady()

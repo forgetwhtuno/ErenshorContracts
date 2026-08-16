@@ -1,6 +1,6 @@
 # Mod overlap check - 2026-08-12
 
-Target concept: local/daily contract board with provider-backed objectives.
+Target concept: Local/Global old-MMO side contract board with provider-backed verified objectives.
 
 ## Current public Erenshor scene
 
@@ -41,6 +41,6 @@ Targeted searches did not surface a current package whose core feature is:
 
 ## Boundary
 
-0.1.0 intentionally avoids a built-in generic kill tracker, item scanner, or quest parser. Those are exactly the areas most likely to overlap existing mods or infer state incorrectly.
+0.3.0 still avoids a built-in generic kill tracker, item scanner, quest parser, crafting observer, or party-state objective. The expanded built-in catalog uses only logical-zone transitions and active-play time. Built-in reward policy remains limited to the isolated XP adapter, which is OFF by default pending current installed-assembly verification; gold/items remain outside Contracts until their native authority/catalog gaps are independently closed. These event-detection and mutation areas are exactly where overlap or inferred state would be riskiest.
 
 Provider-backed objectives let the mod that already owns the fact report it once.

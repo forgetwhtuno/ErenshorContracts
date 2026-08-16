@@ -41,10 +41,10 @@ function Find-LunarisLibDir([string]$Explicit, [string]$Game) {
 
     foreach ($candidate in ($candidates | Select-Object -Unique)) {
         if (-not $candidate) { continue }
-        if (Test-Path (Join-Path $candidate "Lunaris.dll")) { return (Resolve-Path $candidate).Path }
+        if ((Test-Path (Join-Path $candidate "Lunaris.dll")) -and (Test-Path (Join-Path $candidate "0Harmony.dll"))) { return (Resolve-Path $candidate).Path }
     }
 
-    throw "Could not find Lunaris.dll developer reference. Put it in '$ScriptRoot\LunarisLibs' or pass -LunarisLibDir."
+    throw "Could not find Lunaris.dll + 0Harmony.dll developer references. Put both in '$ScriptRoot\LunarisLibs' or pass -LunarisLibDir."
 }
 
 function Find-Csc {
@@ -66,6 +66,7 @@ New-Item -ItemType Directory -Force -Path $pluginRoot | Out-Null
 
 $refs = @(
     (Join-Path $LunarisLibDir "Lunaris.dll"),
+    (Join-Path $LunarisLibDir "0Harmony.dll"),
     (Join-Path $managed "Assembly-CSharp.dll"),
     (Join-Path $managed "netstandard.dll"),
     (Join-Path $managed "UnityEngine.dll"),

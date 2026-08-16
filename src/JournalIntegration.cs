@@ -5,15 +5,15 @@ namespace ErenshorContracts
 {
     internal static class JournalIntegration
     {
+        private const int SupportedContractVersion = 1;
+
+        private static int _resolvedAssemblyCount = -1;
+        private static PropertyInfo _isAvailable;
         private static MethodInfo _addChronicle;
-        private static bool _resolved;
 
         internal static bool TryAppend(string text)
         {
-            if (string.IsNullOrWhiteSpace(text)) return false;
-            Resolve();
-            if (_addChronicle == null) return false;
-
+            if (string.IsNullOrWhiteSpace(text) || !ProviderAvailable()) return false;
             try
             {
                 object result = _addChronicle.Invoke(null, new object[] { "Erenshor Contracts", "Contract", text });
@@ -21,45 +21,89 @@ namespace ErenshorContracts
             }
             catch
             {
-                _resolved = false;
-                _addChronicle = null;
+                Invalidate();
                 return false;
             }
         }
 
-        internal static bool IsAvailable
+        internal static bool IsAvailable { get { return ProviderAvailable(); } }
+
+        private static bool ProviderAvailable()
         {
-            get
+            Resolve();
+            if (_isAvailable == null || _addChronicle == null) return false;
+            try { return (bool)_isAvailable.GetValue(null, null); }
+            catch
             {
-                Resolve();
-                return _addChronicle != null;
+                Invalidate();
+                return false;
             }
         }
 
         private static void Resolve()
         {
-            if (_resolved) return;
-            _resolved = true;
+            Assembly[] assemblies;
+            try { assemblies = AppDomain.CurrentDomain.GetAssemblies(); }
+            catch { return; }
 
-            try
-            {
-                Type api = null;
-                Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();
-                for (int i = 0; i < assemblies.Length && api == null; i++)
-                    api = assemblies[i].GetType("ErenshorJournal.JournalApi", false);
-                if (api == null) return;
+            if (_resolvedAssemblyCount == assemblies.Length && _isAvailable != null && _addChronicle != null)
+                return;
 
-                _addChronicle = api.GetMethod(
-                    "AddChronicleEntry",
-                    BindingFlags.Public | BindingFlags.Static,
-                    null,
-                    new Type[] { typeof(string), typeof(string), typeof(string) },
-                    null);
-            }
-            catch
+            _resolvedAssemblyCount = assemblies.Length;
+            _isAvailable = null;
+            _addChronicle = null;
+
+            PropertyInfo inactiveAvailable = null;
+            MethodInfo inactiveAdd = null;
+
+            for (int i = 0; i < assemblies.Length; i++)
             {
-                _addChronicle = null;
+                Type api;
+                try { api = assemblies[i].GetType("ErenshorJournal.JournalApi", false); }
+                catch { continue; }
+                if (api == null) continue;
+
+                const BindingFlags flags = BindingFlags.Public | BindingFlags.Static;
+                FieldInfo version = api.GetField("ContractVersion", flags);
+                PropertyInfo available = api.GetProperty("IsAvailable", flags);
+                MethodInfo add = api.GetMethod("AddChronicleEntry", flags, null,
+                    new Type[] { typeof(string), typeof(string), typeof(string) }, null);
+
+                if (version == null || version.FieldType != typeof(int) ||
+                    available == null || available.PropertyType != typeof(bool) ||
+                    add == null || add.ReturnType != typeof(bool))
+                    continue;
+
+                int contractVersion;
+                try { contractVersion = (int)version.GetValue(null); }
+                catch { continue; }
+                if (contractVersion != SupportedContractVersion) continue;
+
+                bool live = false;
+                try { live = (bool)available.GetValue(null, null); } catch { }
+                if (live)
+                {
+                    _isAvailable = available;
+                    _addChronicle = add;
+                    return;
+                }
+
+                if (inactiveAvailable == null)
+                {
+                    inactiveAvailable = available;
+                    inactiveAdd = add;
+                }
             }
+
+            _isAvailable = inactiveAvailable;
+            _addChronicle = inactiveAdd;
+        }
+
+        private static void Invalidate()
+        {
+            _resolvedAssemblyCount = -1;
+            _isAvailable = null;
+            _addChronicle = null;
         }
     }
 }
