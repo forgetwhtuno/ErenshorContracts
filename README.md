@@ -87,7 +87,7 @@ EnableNativeXpRewards = true
 
 by default. Existing 0.4.0 persisted `false` values are migrated once to schema 1; later explicit player opt-outs are preserved. The amount is planned once and persisted before the native transaction so a safe retry cannot change payout after a level/threshold change.
 
-### Gold — disabled
+### Gold — implemented
 
 The same-snapshot PvP source demonstrates:
 
