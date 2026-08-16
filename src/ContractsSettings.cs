@@ -49,7 +49,7 @@ namespace ErenshorContracts
         public float WindowHeight = 540f;
 
         // Retain the old key for config compatibility; it is now explicitly the local-board slot count.
-        [Config("DailySlots", "Contracts", "Number of deterministic local contracts offered for the current Local board origin, clamped to 1-6.")]
+        [Config("DailySlots", "Contracts", "Number of deterministic local contracts offered for the current playable zone, clamped to 1-6.")]
         public int DailySlots = 3;
 
         [Config("GlobalSlots", "Contracts", "Number of deterministic global contracts offered across zones, clamped to 1-3.")]
@@ -69,6 +69,9 @@ namespace ErenshorContracts
 
         [Config("EnableNativeXpRewards", "Contracts", "Compatibility gate for verified direct personal XP rewards. Default true: contracts defer the entire claim while a raid is active.")]
         public bool EnableNativeXpRewards = true;
+
+        [Config("RewardConfigVersion", "Contracts", "Internal one-time reward configuration migration marker. Do not edit.")]
+        public int RewardConfigVersion = 0;
 
         [Config("ProfileKey", "Contracts", "Local sidecar profile key used to keep board rotation stable. Change it only if you intentionally want a separate Contracts profile.")]
         public string ProfileKey = "local";

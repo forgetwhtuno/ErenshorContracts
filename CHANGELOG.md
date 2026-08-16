@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.4 — release-candidate locality and target-quality repair
+
+- Available Local offers now use `LocalBoardRevision + current playable zone`; zoning no longer leaves the board visually/semantically pinned to the legacy persisted `LocalBoardZone`.
+- Accepted Local contracts still retain their immutable `OriginZone`, while unaccepted boards follow travel without changing the active-play refresh revision/deadline.
+- Local generated combat targets are frozen per revision+zone, so A → B → A restores the original A set instead of deleting it or creating a zoning reroll.
+- Preserved V1/V2/V3 compatibility by retaining the legacy board-origin fields as read-only migration/history data rather than deleting them.
+- Tightened combat-target quality using only current verified evidence (display name, level, observed population): repeatable creature-like targets are preferred, counts are capped by observed population, and likely proper-name/one-off targets become count-one bounty work.
+- Kill credit still matches the exact native display identity; generic/plural wording is presentation only and does not invent a native family field.
+- Old accepted contracts remain self-contained and are not rewritten. Unaccepted persisted generated targets may only be narrowed when persisted enemy evidence proves the old count is excessive.
+- Preserved the existing Gold + direct personal XP component-ledger transaction, raid deferral, persistence ordering, unknown-outcome lock, and exactly-once Claim boundary unchanged.
+- Added deterministic coverage for current-zone Local identity, A → B → A stability, refresh neutrality on zoning, accepted-origin persistence, per-zone combat freezing, named-target bounds, population caps, legacy persistence, and claim identity across zoning.
+
+## 0.4.2 — Gold + XP claim activation and legacy config migration
+
+- Added a one-time reward schema migration. A persisted pre-production `EnableNativeXpRewards=false` from the 0.4.0 safe default is promoted to `true` once and saved with `RewardConfigVersion=1`; later explicit player opt-outs are preserved.
+- Replaced Contracts' reflected XP invocation with the installed-assembly-proven `GameData.AddExperience(xp, false)` call and now refreshes Gold with `GameData.PlayerInv.UpdatePlayerInventory()`.
+- Preserved component-ledger, overflow, preflight, raid-deferral, and fail-closed unknown-outcome protections. Raid mode defers the entire claim before Gold or XP mutation.
+- Added concise reward diagnostics through `ContractsControlApi.GetRewardDiagnostics()` and deterministic migration/reward-wiring tests.
+
 ## Unreleased - bounded Suite UI polish
 
 - Aligned Contracts and its launcher with the canonical dark/translucent/cyan Sim Actions palette and added a thin cyan frame.
@@ -125,3 +144,7 @@
 ## 0.2.0
 
 - Introduced Local/Global board revisions, active-play refresh timers, built-in XP policy, the initial verification-gated XP adapter, character-scoped sidecars, launcher/Aura integration and retained board UI.
+## 0.4.3 — Forgotten Roads launcher/header chrome
+
+- Standardized the standalone retained-uGUI launcher at 154x32 with programmatic grip marks and collection hover/pressed colors.
+- Replaced font-dependent collapse triangles with mod-owned Image chevrons while preserving panel behavior.

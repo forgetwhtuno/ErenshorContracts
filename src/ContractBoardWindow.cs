@@ -28,7 +28,7 @@ namespace ErenshorContracts
         private GameObject _root;
         private RectTransform _panel;
         private RectTransform _bodyRoot;
-        private TextMeshProUGUI _collapseLabel;
+        private RectTransform _collapseChevron;
         private GameObject _resizeGripRoot;
         private bool _collapsed;
         private float _expandedHeight;
@@ -123,7 +123,7 @@ namespace ErenshorContracts
             RetainedUiKit.AnchorTopStretch(header, 0f, 0f, 0f, SuiteWindowChromePolicy.HeaderHeight);
             RetainedUiKit.AddImage(header, RetainedUiKit.Header);
             AddCollapseButton(header);
-            TextMeshProUGUI title = RetainedUiKit.AddLabel("Title", header, "ERENSHOR CONTRACTS", 15f, FontStyles.Bold, TextAlignmentOptions.MidlineLeft);
+            TextMeshProUGUI title = RetainedUiKit.AddLabel("Title", header, "CONTRACTS", 15f, FontStyles.Bold, TextAlignmentOptions.MidlineLeft);
             RetainedUiKit.Stretch(title.rectTransform, 40f, 0f, 72f, 0f);
             AddHeaderButton(header, "Reset", "R", -38f, reset);
             AddHeaderButton(header, "Close", "X", -6f, close);
@@ -205,7 +205,7 @@ namespace ErenshorContracts
         {
             SuiteDragHandler.ForceReleaseIfOwned();
             RetainedUiKit.DestroyRoot(ref _root);
-            _panel = null; _bodyRoot = null; _collapseLabel = null; _resizeGripRoot = null;
+            _panel = null; _bodyRoot = null; _collapseChevron = null; _resizeGripRoot = null;
             _collapsed = false; _expandedHeight = 0f;
             _content = null; _zoneLabel = null; _refreshLabel = null; _footer = null; _position = null;
             _rows.Clear(); _structureSignature = string.Empty;
@@ -257,7 +257,7 @@ namespace ErenshorContracts
             RetainedUiKit.ClearChildren(_content);
             _rows.Clear();
 
-            string localOrigin = string.IsNullOrWhiteSpace(_localBoardZone) ? "unbound" : _localBoardZone;
+            string localOrigin = string.IsNullOrWhiteSpace(_zone) ? "unavailable" : _zone;
             AddSection("LOCAL CONTRACTS  ·  " + localOrigin);
             bool hasExtraLocal = HasUnrepresentedActive(ContractCategory.Local);
             if (_localOffers.Count == 0 && !hasExtraLocal) AddHint("No local contract templates are available for this zone.");
@@ -312,9 +312,7 @@ namespace ErenshorContracts
             RowUi row = NewRowUi(offer.OccurrenceId, box);
             row.Title.text = offer.Template.Title ?? string.Empty;
             row.Provider.text = ProviderLabel(category, offer.Template.ProviderId);
-            row.Location.text = "LOCATION: " + ContractCore.LocationText(offer.Template,
-                string.Equals(ContractCategory.Normalize(category), ContractCategory.Local, StringComparison.Ordinal)
-                    ? _localBoardZone : _zone);
+            row.Location.text = "LOCATION: " + ContractCore.LocationText(offer.Template, _zone);
             row.Description.text = offer.Template.Description ?? string.Empty;
             row.Reward.text = ContractNativeRewardAdapter.DescribeReward(offer.Template.RewardGoldAmount, offer.Template.RewardXpBasisPoints, offer.Template.RewardText, _nativeXpEnabled);
 
@@ -349,12 +347,9 @@ namespace ErenshorContracts
             {
                 RectTransform actions = RetainedUiKit.AddHorizontalRow("Actions", box, 27f, 6f);
                 string id = offer.OccurrenceId;
-                bool localAway = string.Equals(ContractCategory.Normalize(category), ContractCategory.Local, StringComparison.Ordinal) &&
-                    !string.Equals(_zone, _localBoardZone, StringComparison.OrdinalIgnoreCase);
-                AddStateLabel(actions, localAway ? "RETURN TO BOARD" : "AVAILABLE", localAway ? 104f : 74f);
-                if (!localAway)
-                    RetainedUiKit.AddButton("Accept", actions, "Accept", delegate { Invoke(_accept, id); }, 76f, 25f, false);
-                AddSmallLabel(actions, localAway ? ("Origin: " + _localBoardZone) : ContractCore.TargetText(offer.Template), 210f);
+                AddStateLabel(actions, "AVAILABLE", 74f);
+                RetainedUiKit.AddButton("Accept", actions, "Accept", delegate { Invoke(_accept, id); }, 76f, 25f, false);
+                AddSmallLabel(actions, ContractCore.TargetText(offer.Template), 210f);
             }
             _rows[offer.OccurrenceId] = row;
         }
@@ -527,7 +522,7 @@ namespace ErenshorContracts
 
         private void AddCollapseButton(RectTransform header)
         {
-            Button button = RetainedUiKit.AddButton("Collapse", header, "▲", ToggleCollapsed, 28f, 24f, false);
+            Button button = RetainedUiKit.AddButton("Collapse", header, "", ToggleCollapsed, 28f, 24f, false);
             RectTransform rect = button.GetComponent<RectTransform>();
             LayoutElement layout = rect.GetComponent<LayoutElement>();
             if (layout != null) UnityEngine.Object.DestroyImmediate(layout);
@@ -535,8 +530,8 @@ namespace ErenshorContracts
             rect.pivot = new Vector2(0f, 0.5f);
             rect.anchoredPosition = new Vector2(4f, 0f);
             rect.sizeDelta = new Vector2(28f, 24f);
-            _collapseLabel = button.GetComponentInChildren<TextMeshProUGUI>();
-            if (_collapseLabel != null) _collapseLabel.color = RetainedUiKit.Edge;
+            _collapseChevron = button.GetComponent<RectTransform>();
+            StandaloneLauncherVisual.AddVerticalChevron(_collapseChevron, true);
         }
 
         private void ToggleCollapsed()
@@ -573,7 +568,11 @@ namespace ErenshorContracts
 
         private void UpdateCollapseVisual()
         {
-            if (_collapseLabel != null) _collapseLabel.text = SuiteCameraOwnershipPolicy.CollapseGlyph(_collapsed);
+            if (_collapseChevron == null) return;
+            for (int i = _collapseChevron.childCount - 1; i >= 0; i--)
+                if (_collapseChevron.GetChild(i).name == "Chevron") UnityEngine.Object.Destroy(_collapseChevron.GetChild(i).gameObject);
+            // Expanded points up to collapse; collapsed points down to expand.
+            StandaloneLauncherVisual.AddVerticalChevron(_collapseChevron, !_collapsed);
         }
 
         private static void AddHeaderButton(RectTransform header, string name, string label, float right, Action action)

@@ -14,7 +14,20 @@ internal static class ContractRewardPolicyTests
         Equal(1, ContractRewardPolicy.CalculateXpAmount(1, 1), "xp lower bound");
         string text = ContractRewardPolicy.DescribeReward(42, 500);
         True(text.IndexOf("42 Gold", StringComparison.Ordinal) >= 0 && text.IndexOf("5", StringComparison.Ordinal) >= 0, "reward presentation");
-        return 8;
+        bool xp = true;
+        int schema = 0;
+        True(ContractRewardConfigMigrationPolicy.Apply(ref xp, ref schema), "fresh config receives reward schema");
+        True(xp && schema == ContractRewardConfigMigrationPolicy.CurrentSchema, "fresh config defaults XP on");
+        xp = false;
+        schema = 0;
+        True(ContractRewardConfigMigrationPolicy.Apply(ref xp, ref schema), "legacy false migrates once");
+        True(xp && schema == ContractRewardConfigMigrationPolicy.CurrentSchema, "legacy false becomes production XP on");
+        xp = false;
+        True(!ContractRewardConfigMigrationPolicy.Apply(ref xp, ref schema), "migration marker prevents a second forced change");
+        True(!xp, "explicit post-migration XP opt-out persists");
+        True(ContractRewardConfigMigrationPolicy.SourceLabel(false, 0) == "legacy_0_4_0_false_migrated", "legacy source diagnostic");
+        True(ContractRewardConfigMigrationPolicy.SourceLabel(true, 1) == "schema_persisted", "persisted schema diagnostic");
+        return 17;
     }
     private static void Equal(int expected, int actual, string label) { if (expected != actual) throw new Exception(label + ": expected " + expected + ", got " + actual); }
     private static void True(bool value, string label) { if (!value) throw new Exception(label); }

@@ -687,6 +687,9 @@ namespace ErenshorContracts
             return changed;
         }
 
+        // Legacy V1/V2/V3 board-origin migration helper retained for sidecar compatibility.
+        // Runtime available Local offers no longer use LocalBoardZone as board authority; their
+        // identity is LocalBoardRevision + current playable zone.
         internal static bool EnsureLocalBoardZone(ContractDocument document, string currentZone)
         {
             if (document == null) return false;

@@ -12,10 +12,13 @@ internal static class ContractCombatPolicyTests
         TestEnemyEligibilityExclusions();
         TestLevelAppropriateness();
         TestLocalGenerationUsesCurrentZoneOnly();
+        TestLocalGenerationPersistsPerZoneWithinRevision();
         TestEmptyGenerationRetriesUntilEvidenceExists();
         TestGlobalGenerationUsesOtherObservedZones();
         TestGeneratedLocationCountsAndPriority();
         TestAbundancePreference();
+        TestTargetQualityAndEvidenceCaps();
+        TestLegacyGeneratedOfferQualityNormalization();
         TestCountdownFormattingAndTiming();
         TestKillCreditWrongZoneAndExactlyOnce();
         TestKillLineParsing();
@@ -79,11 +82,35 @@ internal static class ContractCombatPolicyTests
         Equal(2, CountGenerated(doc, ContractCategory.Local), "same revision target set unchanged");
     }
 
+    private static void TestLocalGenerationPersistsPerZoneWithinRevision()
+    {
+        ContractDocument doc = NewDoc();
+        List<ContractEnemyObservation> a = new List<ContractEnemyObservation>();
+        a.Add(Obs("Hidden Hills", "Brittle Skeleton", 10, 10, 4));
+        List<ContractEnemyObservation> b = new List<ContractEnemyObservation>();
+        b.Add(Obs("Faerie's Brake", "Forest Spider", 10, 10, 5));
+
+        True(ContractCombatPolicy.EnsureLocalCombatBoard(doc, 2, "Hidden Hills", "p1", 10, 3, a), "A local generated");
+        string aKey = FirstGeneratedKey(doc, "Hidden Hills", 2);
+        True(aKey.Length > 0, "A generated target captured");
+        True(ContractCombatPolicy.EnsureLocalCombatBoard(doc, 2, "Faerie's Brake", "p1", 10, 3, b), "B local generated same revision");
+        string bKey = FirstGeneratedKey(doc, "Faerie's Brake", 2);
+        True(bKey.Length > 0, "B generated target captured");
+        False(string.Equals(aKey, bKey, StringComparison.OrdinalIgnoreCase), "A and B use independent zone target sets");
+        False(ContractCombatPolicy.EnsureLocalCombatBoard(doc, 2, "Hidden Hills", "p1", 10, 3, a),
+            "returning to A reuses frozen A set rather than rerolling");
+        Equal(aKey, FirstGeneratedKey(doc, "Hidden Hills", 2), "A to B to A returns original generated A target");
+        Equal(2, CountGenerated(doc, ContractCategory.Local), "same revision retains both per-zone generated sets");
+
+        True(ContractCombatPolicy.EnsureLocalCombatBoard(doc, 3, "Hidden Hills", "p1", 10, 3, a), "new revision generates fresh A board");
+        Equal(1, CountGenerated(doc, ContractCategory.Local), "new revision prunes prior local revision sets");
+    }
+
     private static void TestEmptyGenerationRetriesUntilEvidenceExists()
     {
         ContractDocument doc = NewDoc();
-        True(ContractCombatPolicy.EnsureLocalCombatBoard(doc, 0, "Hidden Hills", "p1", 10, 3,
-            new List<ContractEnemyObservation>()), "empty first local scan records generation-state change");
+        False(ContractCombatPolicy.EnsureLocalCombatBoard(doc, 0, "Hidden Hills", "p1", 10, 3,
+            new List<ContractEnemyObservation>()), "empty first local scan leaves no fake persisted board state");
         Equal(-1, doc.LocalCombatGenerationRevision, "empty local scan does not freeze revision");
         List<ContractEnemyObservation> later = new List<ContractEnemyObservation>();
         later.Add(Obs("Hidden Hills", "Brittle Skeleton", 10, 10, 3));
@@ -126,7 +153,7 @@ internal static class ContractCombatPolicyTests
             False(string.Equals("Hidden Hills", offer.TargetZone, StringComparison.OrdinalIgnoreCase),
                 "global never targets current zone at generation");
             True(!string.IsNullOrWhiteSpace(offer.TargetZone), "global target location always explicit");
-            True(offer.TargetCount >= 10 && offer.TargetCount <= 14, "global count is larger grind range");
+            True(offer.TargetCount >= 1 && offer.TargetCount <= 12, "global count is bounded by deterministic range and observed population");
         }
 
         ContractCombatPolicy.MergeObservations(doc, new List<ContractEnemyObservation> {
@@ -143,7 +170,7 @@ internal static class ContractCombatPolicyTests
         scan.Add(Obs("Hidden Hills", "Brittle Skeleton", 10, 10, 3));
         ContractCombatPolicy.EnsureLocalCombatBoard(doc, 0, "Hidden Hills", "p1", 10, 3, scan);
         ContractTemplate t = ContractCombatPolicy.BuildGeneratedTemplates(doc)[0];
-        True(t.Target >= 6 && t.Target <= 9, "local count sensible");
+        True(t.Target >= 1 && t.Target <= 6, "local count capped by observed population evidence");
         Equal("Hidden Hills", ContractCore.LocationText(t, "Wrong"), "template location authoritative");
         Equal(1000, t.Priority, "generated combat priority dominates low-priority fallback");
         List<ContractTemplate> boardMix = new List<ContractTemplate>();
@@ -170,6 +197,64 @@ internal static class ContractCombatPolicyTests
         List<ContractTemplate> generated = ContractCombatPolicy.BuildGeneratedTemplates(doc);
         Equal(1, generated.Count, "one slot yields one grind target");
         Equal("Common Enemy", generated[0].ContextFilter, "equal-level generation prefers more plentiful enemy type");
+    }
+
+    private static void TestTargetQualityAndEvidenceCaps()
+    {
+        False(ContractEnemyTargetPolicy.IsLikelyExactNamedTarget("Brittle Skeleton", 3), "skeleton type remains repeatable/generic");
+        False(ContractEnemyTargetPolicy.IsLikelyExactNamedTarget("Young Wolf", 4), "wolf type remains repeatable/generic");
+        True(ContractEnemyTargetPolicy.IsLikelyExactNamedTarget("Trevor Ulchand", 1), "one-off proper identity becomes exact bounty-style target");
+        True(ContractEnemyTargetPolicy.IsLikelyExactNamedTarget("Trevor Ulchand", 3), "proper personal-name shape stays exact even if duplicate actors are observed");
+        Equal(1, ContractEnemyTargetPolicy.ResolveTargetCount(ContractCategory.Local, "named", "Trevor Ulchand", 7),
+            "named target can never become Kill 10 proper name");
+
+        int local = ContractEnemyTargetPolicy.ResolveTargetCount(ContractCategory.Local, "ordinary", "Brittle Skeleton", 3);
+        True(local >= 1 && local <= 6, "ordinary local target capped to twice observed population");
+        int global = ContractEnemyTargetPolicy.ResolveTargetCount(ContractCategory.Global, "ordinary-global", "Young Wolf", 2);
+        True(global >= 1 && global <= 6, "ordinary global target capped to three times observed population");
+        Equal("Brittle Skeletons", ContractEnemyTargetPolicy.BuildDisplayTarget("Brittle Skeleton", 4, 3),
+            "ordinary repeatable objective uses generic/plural presentation");
+        Equal("Young Wolves", ContractEnemyTargetPolicy.BuildDisplayTarget("Young Wolf", 4, 4),
+            "wolf generic presentation pluralizes naturally");
+        Equal("Trevor Ulchand", ContractEnemyTargetPolicy.BuildDisplayTarget("Trevor Ulchand", 1, 1),
+            "exact bounty presentation keeps exact native display identity");
+
+        ContractDocument doc = NewDoc();
+        List<ContractEnemyObservation> scan = new List<ContractEnemyObservation>();
+        scan.Add(Obs("Hidden Hills", "Trevor Ulchand", 10, 10, 1));
+        scan.Add(Obs("Hidden Hills", "Brittle Skeleton", 10, 10, 4));
+        ContractCombatPolicy.EnsureLocalCombatBoard(doc, 0, "Hidden Hills", "p1", 10, 2, scan);
+        List<ContractTemplate> generated = ContractCombatPolicy.BuildGeneratedTemplates(doc);
+        Equal(2, generated.Count, "eligible present targets generate bounded local offers");
+        Equal("Brittle Skeleton", generated[0].ContextFilter, "ordinary repeated mob is preferred ahead of named target");
+        for (int i = 0; i < generated.Count; i++)
+        {
+            Equal("Hidden Hills", generated[i].TargetZone, "generated target is present in intended zone");
+            if (string.Equals(generated[i].ContextFilter, "Trevor Ulchand", StringComparison.OrdinalIgnoreCase))
+            {
+                Equal(1, generated[i].Target, "named generated target has bounty-like count one");
+                True(generated[i].Title.IndexOf("Bounty", StringComparison.OrdinalIgnoreCase) >= 0, "named target uses bounty presentation");
+            }
+        }
+    }
+
+    private static void TestLegacyGeneratedOfferQualityNormalization()
+    {
+        ContractDocument doc = NewDoc();
+        ContractEnemyRecord enemy = new ContractEnemyRecord();
+        enemy.Zone = "Hidden Hills"; enemy.EnemyName = "Trevor Ulchand"; enemy.MinLevel = 10; enemy.MaxLevel = 10;
+        enemy.ObservedCount = 1; doc.EnemyCatalog.Add(enemy);
+        ContractGeneratedCombatOffer old = new ContractGeneratedCombatOffer();
+        old.Category = ContractCategory.Local; old.BoardRevision = 0; old.BoardZone = "Hidden Hills";
+        old.TargetZone = "Hidden Hills"; old.EnemyName = "Trevor Ulchand"; old.TargetCount = 10;
+        True(ContractCombatPolicy.NormalizeGeneratedOfferForCurrentEvidence(doc, old), "legacy unaccepted generated target can be narrowed safely");
+        Equal(1, old.TargetCount, "legacy proper-name offer normalized to one target");
+
+        // Accepted instances are a separate persisted model and are not passed through generated-offer normalization.
+        ContractInstance accepted = new ContractInstance();
+        accepted.OriginZone = "Hidden Hills"; accepted.TargetZone = "Hidden Hills"; accepted.ContextFilter = "Trevor Ulchand";
+        accepted.Target = 10; accepted.Progress = 2;
+        Equal(10, accepted.Target, "old accepted contract remains self-contained and is not rewritten");
     }
 
     private static void TestCountdownFormattingAndTiming()
@@ -268,6 +353,18 @@ internal static class ContractCombatPolicyTests
         ContractEnemyObservation value = new ContractEnemyObservation();
         value.Zone = zone; value.EnemyName = name; value.MinLevel = min; value.MaxLevel = max; value.Count = count;
         return value;
+    }
+
+    private static string FirstGeneratedKey(ContractDocument doc, string zone, int revision)
+    {
+        for (int i = 0; i < doc.GeneratedCombatOffers.Count; i++)
+        {
+            ContractGeneratedCombatOffer value = doc.GeneratedCombatOffers[i];
+            if (value == null || value.BoardRevision != revision) continue;
+            if (!string.Equals(value.BoardZone, zone, StringComparison.OrdinalIgnoreCase)) continue;
+            return value.TargetZone + "|" + value.EnemyName + "|" + value.TargetCount.ToString();
+        }
+        return string.Empty;
     }
 
     private static int CountGenerated(ContractDocument doc, string category)

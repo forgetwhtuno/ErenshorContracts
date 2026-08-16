@@ -1,4 +1,4 @@
-# Erenshor Contracts 0.4.0
+# Erenshor Contracts 0.4.4
 
 Part of the **Forgotten Roads for Erenshor** mod collection.
 
@@ -17,7 +17,7 @@ The retained board uses the suite's compact dark/translucent/cyan presentation. 
 
 A refresh advances the **whole category revision**. Claimed or abandoned slots do not instantly refill. Accepted contracts from an older revision remain active until completed/abandoned and continue to appear under their true Local or Global section.
 
-Each Local revision also has one persisted **board origin zone**. Zoning does not generate a new Local board: the same three slots remain tied to that origin until the 45-minute Local refresh. Travel contracts can take you away, but new Local work can only be accepted while you are back in the board-origin zone. At the next Local refresh, the board rebinds to the playable zone you are currently in. This closes the zone-hop reroll/farming loop while keeping Local objectives genuinely local.
+Available Local offers follow the **current playable zone**. Their deterministic identity is `LocalBoardRevision + current zone`, so zoning changes locality without advancing the 45-minute revision or refresh deadline. Returning A → B → A within one revision returns the same A offer set rather than creating a fresh reroll. Once a Local contract is accepted, its `OriginZone` is captured permanently and that accepted work remains self-contained while the available board follows later travel. The legacy persisted `LocalBoardZone` field is still read for backward compatibility but is no longer runtime board authority.
 
 Active-play time advances only while the character is fully in world, the logical zone is playable, the game application is focused, and simulation time is running. Closing the game, sitting at character select/title/loading, alt-tabbing away, or pausing simulation does not advance refresh timers or time objectives.
 
@@ -25,15 +25,17 @@ Active-play time advances only while the character is fully in world, the logica
 
 ### Local — combat first
 
-New Local boards are built from **real loaded native enemies in the persisted Local board-origin zone**. Contracts scans ordinary hostile `NPC` actors on a bounded cadence and rejects Sim-backed actors, players/friendly factions, resources/chests, summoned/owned actors, vendors, invulnerable actors, PvP temporary proxies when that optional capability is present, and boss-reward actors. It reads the native enemy display name and native level.
+New Local boards are built from **real loaded native enemies in the current playable zone**. Contracts scans ordinary hostile `NPC` actors on a bounded cadence and rejects Sim-backed actors, players/friendly factions, resources/chests, summoned/owned actors, vendors, invulnerable actors, PvP temporary proxies when that optional capability is present, and boss-reward actors. Current verified runtime evidence exposes the native enemy display name, native level, and observed population count; it does not expose a proven creature-family/template identifier in this packet.
 
 The generated Local board then:
 
 - admits only enemy types whose observed level range is within five levels of the current character;
 - prefers more plentiful observed enemy types when level fit is equal;
-- uses deterministic **6–9 kill** targets;
+- prefers repeatable/generic-looking enemy types over likely personal-name targets when both are otherwise eligible;
+- uses deterministic repeatable counts that are capped by the observed population (normally 5–8 Local before the evidence cap);
+- treats likely one-off/proper-name identities as bounty-style exact targets with a count of **1**;
 - writes the exact destination zone into the contract;
-- freezes those selected targets for the whole persisted Local board revision so spawns/deaths do not reroll the visible board.
+- freezes each selected **revision + zone** target set, so spawn churn does not reroll a zone and A → B → A returns the original A set.
 
 If the first bounded scan after loading has no qualifying enemy yet, Contracts does **not** freeze an empty generation. It keeps the revision retryable and can populate it once authoritative live enemies appear.
 
@@ -49,7 +51,7 @@ New Global offers:
 - use only previously observed qualifying native enemy types;
 - apply the same level-appropriateness rule;
 - prefer more plentiful observed targets when level fit is equal;
-- use deterministic **10–14 kill** targets;
+- use deterministic repeatable counts (normally 8–12 before the observed-population cap), while likely exact/named targets remain bounded to one;
 - show the exact destination on the card;
 - freeze once a verified Global target set exists for that board revision.
 
@@ -77,15 +79,13 @@ GameData.AddExperience(xp, false)
 
 The sibling PvP implementation uses `false` for a fixed award rather than ordinary grouped NPC-kill semantics. Same-snapshot Crafting findings independently identify `GameData.AddExperience(int,bool)` as combat/quest XP.
 
-However, the supplied handoff does **not** contain the user's current installed `Assembly-CSharp.dll`. Contracts therefore does not claim a fresh authoritative trace from NPC-kill/quest call sites in this pass and keeps:
+The current installed game assembly and the live-proven sibling PvP module confirm this exact reward call. Contracts uses the same direct typed API and defers the **entire** claim while `GameData.RaidActive` so contract XP is never routed to raid XP. The production default is:
 
 ```text
-EnableNativeXpRewards = false
+EnableNativeXpRewards = true
 ```
 
-by default.
-
-When a local tester deliberately enables it after inspecting the installed DLL, `ContractNativeRewardAdapter` still re-resolves the exact static `(int,bool)` method shape and verifies the current player XP threshold. The amount is planned once and persisted before the native transaction so a safe retry cannot change payout after a level/threshold change.
+by default. Existing 0.4.0 persisted `false` values are migrated once to schema 1; later explicit player opt-outs are preserved. The amount is planned once and persisted before the native transaction so a safe retry cannot change payout after a level/threshold change.
 
 ### Gold — disabled
 
@@ -96,7 +96,7 @@ GameData.PlayerInv.Gold += gold;
 GameData.PlayerInv.UpdatePlayerInventory();
 ```
 
-That is concrete evidence that the live Inventory field/UI refresh path works for that sibling mod, but it is **not** the authoritative grant operation requested for Contracts. No quest/vendor/loot currency-award call chain is present in this handoff and there is no current installed DLL to trace it from. Contracts therefore does not mutate the Gold field.
+That is the current same-game, live-proven path used by Contracts: it changes `GameData.PlayerInv.Gold` only after all unapplied reward components have passed preflight, then calls `GameData.PlayerInv.UpdatePlayerInventory()`. The component ledger is persisted before and after every irreversible call.
 
 ### Items/resources — disabled
 
@@ -146,7 +146,7 @@ plugins/config/ErenshorContracts/Characters/<character-key>/contracts.dat
 
 It never edits Erenshor save files.
 
-V3 stores board revisions, the persisted Local board-origin zone, active-play time, active/claimed occurrences, generated combat target sets, the bounded observed native enemy catalog, objective state, reward definitions, planned reward amounts, component transaction state, and actual applied amounts. It reads V1/V2, preserves older accepted objectives, infers the current Local board origin from current-revision active/claimed occurrence evidence where possible (preventing a one-time upgrade reroll), and migrates a legacy in-flight pending XP marker to `OutcomeUnknown` rather than risking replay.
+V3 stores board revisions, the legacy Local board-origin field, active-play time, active/claimed occurrences, per-zone generated combat target sets, the bounded observed native enemy catalog, objective state, reward definitions, planned reward amounts, component transaction state, and actual applied amounts. It reads V1/V2 and preserves older accepted objectives. The legacy `LocalBoardZone` value remains readable but no longer controls available-board locality. Existing unaccepted generated combat rows may be narrowed on load when current persisted population evidence proves an old count is excessive; accepted `A` rows are never rewritten. Legacy in-flight reward state still migrates fail-closed rather than risking replay.
 
 Persistence hardening includes:
 
@@ -166,7 +166,7 @@ Provider progress reports in API v1 contain no character id. They are consumed o
 
 The retained Contracts board stays compact and readable:
 
-- separate **LOCAL CONTRACTS** and **GLOBAL CONTRACTS** sections, with the Local board origin shown in the section header;
+- separate **LOCAL CONTRACTS** and **GLOBAL CONTRACTS** sections, with the current playable Local zone shown in the section header;
 - live top-line `LOCAL REFRESH  00:27:41    GLOBAL REFRESH  01:42:36` countdowns driven by persisted active-play seconds;
 - title, explicit `LOCATION`, objective, progress, reward and state on each card;
 - Accept / Abandon / Claim / Retry / Finalize as appropriate;
