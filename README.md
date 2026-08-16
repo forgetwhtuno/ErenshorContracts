@@ -1,5 +1,7 @@
 # Erenshor Contracts 0.4.0
 
+Part of the **Forgotten Roads for Erenshor** mod collection.
+
 A deterministic **Local + Global contract board** designed as optional old-school MMO side progression.
 
 Contracts should be something you check occasionally while adventuring, not a daily-task treadmill. It does not create streaks, login chores, instant rerolls, GPS automation, or generated quests. The board stays stable for active-play windows, accepted work survives zoning/reload, and rewards are intentionally modest relative to normal progression.
