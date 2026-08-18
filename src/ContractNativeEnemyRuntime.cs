@@ -99,7 +99,8 @@ namespace ErenshorContracts
                     character != null && character.BossXp > 0f,
                     requireAlive,
                     character != null && character.Alive,
-                    forbiddenPetIdentity);
+                    forbiddenPetIdentity,
+                    IsNamedIndividualActor(npc, character));
                 if (!eligible) { character = null; return false; }
                 return true;
             }
@@ -108,6 +109,109 @@ namespace ErenshorContracts
                 character = null;
                 return false;
             }
+        }
+
+        // Unique story/quest/raid/rare actors are not grind-board material. NPC keeps this
+        // identity wiring in private fields, so it is read through cached Harmony AccessTools
+        // handles; the decision itself lives in ContractMobTargetPolicy so it stays deterministic
+        // and testable. A field that cannot be resolved simply stops contributing evidence - the
+        // remaining signals still apply and the board never goes silently empty.
+        private static bool _identityFieldsResolved;
+        private static FieldInfo _npcDialogField;
+        private static FieldInfo _npcQuestsField;
+        private static FieldInfo _npcQuestToAssignField;
+        private static FieldInfo _npcRaidManagerField;
+        private static FieldInfo _npcSpawnPointField;
+
+        private static void ResolveIdentityFields()
+        {
+            if (_identityFieldsResolved) return;
+            _identityFieldsResolved = true;
+            try
+            {
+                _npcDialogField = AccessTools.Field(typeof(NPC), "MyDialog");
+                _npcQuestsField = AccessTools.Field(typeof(NPC), "MyQuests");
+                _npcQuestToAssignField = AccessTools.Field(typeof(NPC), "questToAssign");
+                _npcRaidManagerField = AccessTools.Field(typeof(NPC), "RM");
+                _npcSpawnPointField = AccessTools.Field(typeof(NPC), "MySpawnPoint");
+            }
+            catch { }
+        }
+
+        private static bool IsNamedIndividualActor(NPC npc, Character character)
+        {
+            try
+            {
+                ResolveIdentityFields();
+                bool hasDialog = HasComponentReference(_npcDialogField, npc);
+                bool assignsQuest = HasComponentReference(_npcQuestsField, npc) || ReadBool(_npcQuestToAssignField, npc);
+                bool completesQuestOnDeath = character != null && character.QuestCompleteOnDeath != null;
+                bool achievementActor = !string.IsNullOrEmpty(npc.SetAchievementOnDefeat) ||
+                    !string.IsNullOrEmpty(npc.SetAchievementOnSpawn);
+                bool raidManaged = HasComponentReference(_npcRaidManagerField, npc);
+                return ContractMobTargetPolicy.IsNamedIndividualActor(
+                    hasDialog, assignsQuest, completesQuestOnDeath, achievementActor, raidManaged, IsRareSpawnVariant(npc));
+            }
+            catch
+            {
+                // Unreadable identity evidence fails closed: an actor we cannot classify never
+                // becomes a contract target.
+                return true;
+            }
+        }
+
+        // Rare-spawn placeholders are the game's own named-variant mechanism. A spawn point lists
+        // its ordinary population in CommonSpawns and its named variants in RareSpawns, so prefab
+        // identity against RareSpawns classifies the live actor without guessing from its name.
+        private static bool IsRareSpawnVariant(NPC npc)
+        {
+            try
+            {
+                ResolveIdentityFields();
+                if (_npcSpawnPointField == null || npc == null) return false;
+                SpawnPoint spawn = _npcSpawnPointField.GetValue(npc) as SpawnPoint;
+                if (spawn == null || spawn.RareSpawns == null || spawn.RareSpawns.Count == 0) return false;
+                string actor = StripCloneSuffix(npc.gameObject == null ? string.Empty : npc.gameObject.name);
+                if (actor.Length == 0) return false;
+                for (int i = 0; i < spawn.RareSpawns.Count; i++)
+                {
+                    GameObject prefab = spawn.RareSpawns[i];
+                    if (prefab == null) continue;
+                    if (string.Equals(StripCloneSuffix(prefab.name), actor, StringComparison.OrdinalIgnoreCase)) return true;
+                }
+                return false;
+            }
+            catch { return false; }
+        }
+
+        private static bool HasComponentReference(FieldInfo field, NPC npc)
+        {
+            if (field == null || npc == null) return false;
+            try
+            {
+                UnityEngine.Object value = field.GetValue(npc) as UnityEngine.Object;
+                return value != null; // Unity lifetime-aware null comparison
+            }
+            catch { return false; }
+        }
+
+        private static bool ReadBool(FieldInfo field, NPC npc)
+        {
+            if (field == null || npc == null) return false;
+            try
+            {
+                object raw = field.GetValue(npc);
+                return raw is bool && (bool)raw;
+            }
+            catch { return false; }
+        }
+
+        private static string StripCloneSuffix(string value)
+        {
+            string text = (value ?? string.Empty).Trim();
+            while (text.EndsWith("(Clone)", StringComparison.OrdinalIgnoreCase))
+                text = text.Substring(0, text.Length - "(Clone)".Length).TrimEnd();
+            return text;
         }
 
         internal static string ReadEnemyName(NPC npc)

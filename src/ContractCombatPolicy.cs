@@ -84,12 +84,13 @@ namespace ErenshorContracts
         internal static int MergeObservations(ContractDocument document, IList<ContractEnemyObservation> observations, long activePlaySeconds)
         {
             if (document == null || observations == null) return 0;
-            int changed = 0;
+            int changed = PruneNamedEnemyRecords(document.EnemyCatalog);
             long seenAt = Math.Max(0L, activePlaySeconds);
             for (int i = 0; i < observations.Count; i++)
             {
                 ContractEnemyObservation observation = observations[i];
                 if (!IsUsableObservation(observation)) continue;
+                if (!ContractMobTargetPolicy.IsMobTarget(observation.EnemyName, observation.Count)) continue;
                 string zone = ContractCore.Clean(observation.Zone, 128);
                 string name = ContractCore.Clean(observation.EnemyName, 120);
                 ContractEnemyRecord existing = FindEnemyRecord(document.EnemyCatalog, zone, name);
@@ -151,6 +152,7 @@ namespace ErenshorContracts
                 ContractEnemyObservation observation = currentObservations[i];
                 if (!IsUsableObservation(observation) ||
                     !string.Equals(observation.Zone, zone, StringComparison.OrdinalIgnoreCase) ||
+                    !ContractMobTargetPolicy.IsMobTarget(observation.EnemyName, observation.Count) ||
                     !IsLevelAppropriate(playerLevel, observation.MinLevel, observation.MaxLevel))
                     continue;
                 ContractEnemyRecord record = new ContractEnemyRecord();
@@ -192,6 +194,7 @@ namespace ErenshorContracts
                 ContractEnemyRecord record = document.EnemyCatalog[i];
                 if (record == null || string.IsNullOrWhiteSpace(record.Zone) || string.IsNullOrWhiteSpace(record.EnemyName)) continue;
                 if (string.Equals(record.Zone, currentZone ?? string.Empty, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!ContractMobTargetPolicy.IsMobTarget(record.EnemyName, record.ObservedCount)) continue;
                 if (!IsLevelAppropriate(playerLevel, record.MinLevel, record.MaxLevel)) continue;
                 candidates.Add(record);
             }
@@ -217,6 +220,8 @@ namespace ErenshorContracts
                 if (string.Equals(category, ContractCategory.Local, StringComparison.Ordinal) && generated.BoardRevision != document.LocalBoardRevision) continue;
                 if (string.Equals(category, ContractCategory.Global, StringComparison.Ordinal) && generated.BoardRevision != document.GlobalBoardRevision) continue;
                 int observedCount = FindObservedCount(document, generated.TargetZone, generated.EnemyName);
+                // Retires named-individual offers persisted by builds that generated them.
+                if (!ContractMobTargetPolicy.IsMobTarget(generated.EnemyName, observedCount)) continue;
                 bool exactNamedTarget = ContractEnemyTargetPolicy.IsLikelyExactNamedTarget(generated.EnemyName, observedCount);
                 string stable = category + "|" + generated.BoardRevision.ToString(CultureInfo.InvariantCulture) + "|" +
                     generated.TargetZone + "|" + generated.EnemyName;
@@ -428,6 +433,22 @@ namespace ErenshorContracts
                 if (value == null || string.Equals(ContractCategory.Normalize(value.Category), normalized, StringComparison.Ordinal))
                     offers.RemoveAt(i);
             }
+        }
+
+        // Catalog records persist across sessions, so a named individual captured by an older
+        // build has to be retired here rather than only being filtered at generation time.
+        private static int PruneNamedEnemyRecords(List<ContractEnemyRecord> catalog)
+        {
+            if (catalog == null) return 0;
+            int removed = 0;
+            for (int i = catalog.Count - 1; i >= 0; i--)
+            {
+                ContractEnemyRecord record = catalog[i];
+                if (record != null && ContractMobTargetPolicy.IsMobTarget(record.EnemyName, record.ObservedCount)) continue;
+                catalog.RemoveAt(i);
+                removed++;
+            }
+            return removed;
         }
 
         private static void EvictOldestEnemyRecord(List<ContractEnemyRecord> records)

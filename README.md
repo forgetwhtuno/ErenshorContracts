@@ -25,15 +25,14 @@ Active-play time advances only while the character is fully in world, the logica
 
 ### Local — combat first
 
-New Local boards are built from **real loaded native enemies in the current playable zone**. Contracts scans ordinary hostile `NPC` actors on a bounded cadence and rejects Sim-backed actors, players/friendly factions, resources/chests, summoned/owned actors, vendors, invulnerable actors, PvP temporary proxies when that optional capability is present, and boss-reward actors. Current verified runtime evidence exposes the native enemy display name, native level, and observed population count; it does not expose a proven creature-family/template identifier in this packet.
+New Local boards are built from **real loaded native enemies in the current playable zone**. Contracts scans ordinary hostile `NPC` actors on a bounded cadence and rejects Sim-backed actors, players/friendly factions, resources/chests, summoned/owned actors, vendors, invulnerable actors, PvP temporary proxies when that optional capability is present, boss-reward actors, and named individuals (dialog actors, quest givers, quest-kill targets, achievement/raid actors, and rare named spawn variants). Current verified runtime evidence exposes the native enemy display name, native level, and observed population count; it does not expose a proven creature-family/template identifier in this packet.
 
 The generated Local board then:
 
 - admits only enemy types whose observed level range is within five levels of the current character;
 - prefers more plentiful observed enemy types when level fit is equal;
-- prefers repeatable/generic-looking enemy types over likely personal-name targets when both are otherwise eligible;
+- offers ordinary mob types only — a personal-name identity ("Trevor Ulchand") or an individual name shape ("Grum the Vile", "Karthus of the Deep") is never generated as a target, and a display name seen on two or more live actors at once is treated as a mob type;
 - uses deterministic repeatable counts that are capped by the observed population (normally 5–8 Local before the evidence cap);
-- treats likely one-off/proper-name identities as bounty-style exact targets with a count of **1**;
 - writes the exact destination zone into the contract;
 - freezes each selected **revision + zone** target set, so spawn churn does not reroll a zone and A → B → A returns the original A set.
 
@@ -51,7 +50,8 @@ New Global offers:
 - use only previously observed qualifying native enemy types;
 - apply the same level-appropriateness rule;
 - prefer more plentiful observed targets when level fit is equal;
-- use deterministic repeatable counts (normally 8–12 before the observed-population cap), while likely exact/named targets remain bounded to one;
+- use deterministic repeatable counts (normally 8–12 before the observed-population cap);
+- exclude named individuals, including catalog entries persisted by an older build;
 - show the exact destination on the card;
 - freeze once a verified Global target set exists for that board revision.
 

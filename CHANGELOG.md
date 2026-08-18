@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — mob-only contract targets
+
+- Contract generation is now limited to ordinary mobs. Named individuals are excluded at discovery using live actor evidence: dialog actors, quest givers (`MyQuests` / `questToAssign`), quest-completing kill targets, achievement actors (`SetAchievementOnDefeat` / `SetAchievementOnSpawn`), raid-managed actors, and rare named spawn variants (prefab identity against the spawn point's `RareSpawns`). Boss-reward exclusion is unchanged.
+- Added `ContractMobTargetPolicy`: a Unity-free decision holding both the structural named-individual evidence and a conservative display-name shape test used for persisted catalog records, which no longer carry that evidence. A name observed on two or more live actors at once still counts as a mob type.
+- The enemy catalog, Local generation, Global generation, and generated-template building all apply the filter, so named entries and offers persisted by older builds are retired rather than re-offered.
+- Bounty-style count-one presentation for exact named identities is now unreachable for generated contracts; kill credit, reward, refresh, and claim behavior are unchanged.
+- Accepted contracts are self-contained and are not rewritten.
+
 ## 0.4.4 — release-candidate locality and target-quality repair
 
 - Available Local offers now use `LocalBoardRevision + current playable zone`; zoning no longer leaves the board visually/semantically pinned to the legacy persisted `LocalBoardZone`.

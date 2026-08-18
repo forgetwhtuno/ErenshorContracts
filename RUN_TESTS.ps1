@@ -20,6 +20,7 @@ $out = Join-Path $env:TEMP "ErenshorContractsCoreTests.exe"
     (Join-Path $ScriptRoot "src\ContractRewardAuthorityPolicy.cs") `
     (Join-Path $ScriptRoot "src\ContractEnemyEligibilityPolicy.cs") `
     (Join-Path $ScriptRoot "src\ContractEnemyTargetPolicy.cs") `
+    (Join-Path $ScriptRoot "src\ContractMobTargetPolicy.cs") `
     (Join-Path $ScriptRoot "src\ContractCombatPolicy.cs") `
     (Join-Path $ScriptRoot "src\ContractKillCreditPolicy.cs") `
     (Join-Path $ScriptRoot "src\ContractCore.cs") `

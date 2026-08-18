@@ -18,6 +18,7 @@ internal static class ContractCombatPolicyTests
         TestGeneratedLocationCountsAndPriority();
         TestAbundancePreference();
         TestTargetQualityAndEvidenceCaps();
+        TestNamedIndividualsNeverBecomeTargets();
         TestLegacyGeneratedOfferQualityNormalization();
         TestCountdownFormattingAndTiming();
         TestKillCreditWrongZoneAndExactlyOnce();
@@ -42,6 +43,7 @@ internal static class ContractCombatPolicyTests
         False(Eligible(knownFriendlyFaction: true), "known friendly/debug faction rejected");
         False(Eligible(bossRewardActor: true), "boss-reward actor rejected from repeatable grind pool");
         False(Eligible(forbiddenPetIdentity: true), "pet/minion identity rejected");
+        False(Eligible(namedIndividualActor: true), "named individual actor rejected");
         False(Eligible(alive: false), "dead actor rejected for discovery scan");
         True(Eligible(alive: false, requireAlive: false), "DoDeath candidate may bypass discovery Alive requirement");
     }
@@ -225,17 +227,59 @@ internal static class ContractCombatPolicyTests
         scan.Add(Obs("Hidden Hills", "Brittle Skeleton", 10, 10, 4));
         ContractCombatPolicy.EnsureLocalCombatBoard(doc, 0, "Hidden Hills", "p1", 10, 2, scan);
         List<ContractTemplate> generated = ContractCombatPolicy.BuildGeneratedTemplates(doc);
-        Equal(2, generated.Count, "eligible present targets generate bounded local offers");
-        Equal("Brittle Skeleton", generated[0].ContextFilter, "ordinary repeated mob is preferred ahead of named target");
+        Equal(1, generated.Count, "only the ordinary mob type is offered; the named individual is skipped");
+        Equal("Brittle Skeleton", generated[0].ContextFilter, "ordinary repeated mob is the generated target");
         for (int i = 0; i < generated.Count; i++)
-        {
             Equal("Hidden Hills", generated[i].TargetZone, "generated target is present in intended zone");
-            if (string.Equals(generated[i].ContextFilter, "Trevor Ulchand", StringComparison.OrdinalIgnoreCase))
-            {
-                Equal(1, generated[i].Target, "named generated target has bounty-like count one");
-                True(generated[i].Title.IndexOf("Bounty", StringComparison.OrdinalIgnoreCase) >= 0, "named target uses bounty presentation");
-            }
-        }
+    }
+
+    private static void TestNamedIndividualsNeverBecomeTargets()
+    {
+        True(ContractMobTargetPolicy.IsNamedIndividualActor(true, false, false, false, false, false), "dialog actor is a named individual");
+        True(ContractMobTargetPolicy.IsNamedIndividualActor(false, true, false, false, false, false), "quest giver is a named individual");
+        True(ContractMobTargetPolicy.IsNamedIndividualActor(false, false, true, false, false, false), "quest-completing kill target is a named individual");
+        True(ContractMobTargetPolicy.IsNamedIndividualActor(false, false, false, true, false, false), "achievement actor is a named individual");
+        True(ContractMobTargetPolicy.IsNamedIndividualActor(false, false, false, false, true, false), "raid-managed actor is a named individual");
+        True(ContractMobTargetPolicy.IsNamedIndividualActor(false, false, false, false, false, true), "rare spawn variant is a named individual");
+        False(ContractMobTargetPolicy.IsNamedIndividualActor(false, false, false, false, false, false), "ordinary mob carries no named-individual evidence");
+
+        False(ContractMobTargetPolicy.IsMobTarget("Grum the Vile", 4), "'X the Y' stays off the board even with a population");
+        False(ContractMobTargetPolicy.IsMobTarget("Karthus of the Deep", 3), "'X of Y' stays off the board even with a population");
+        False(ContractMobTargetPolicy.IsMobTarget("Trevor Ulchand", 1), "single proper-name identity is not a mob target");
+        True(ContractMobTargetPolicy.IsMobTarget("Brittle Skeleton", 1), "generic mob type qualifies on a single sighting");
+        True(ContractMobTargetPolicy.IsMobTarget("Dune Stalker", 3), "observed population outranks name shape");
+        False(ContractMobTargetPolicy.IsMobTarget(" ", 5), "empty identity is never a target");
+
+        // Global generation reads the persisted catalog, which must not retain named individuals.
+        ContractDocument doc = NewDoc();
+        List<ContractEnemyObservation> scan = new List<ContractEnemyObservation>();
+        scan.Add(Obs("Bonepits", "Grum the Vile", 10, 10, 1));
+        scan.Add(Obs("Bonepits", "Bone Guard", 10, 10, 3));
+        ContractCombatPolicy.MergeObservations(doc, scan, 120);
+        Equal(1, doc.EnemyCatalog.Count, "named individual never enters the enemy catalog");
+        Equal("Bone Guard", doc.EnemyCatalog[0].EnemyName, "only the ordinary mob type is catalogued");
+
+        ContractEnemyRecord stale = new ContractEnemyRecord();
+        stale.Zone = "Bonepits"; stale.EnemyName = "Grum the Vile"; stale.MinLevel = 10; stale.MaxLevel = 10;
+        stale.ObservedCount = 1; stale.LastSeenActiveSeconds = 60;
+        doc.EnemyCatalog.Add(stale);
+        ContractCombatPolicy.MergeObservations(doc, scan, 180);
+        Equal(1, doc.EnemyCatalog.Count, "catalog entry persisted by an older build is retired");
+
+        ContractCombatPolicy.EnsureGlobalCombatBoard(doc, 0, "Hidden Hills", "p1", 10, 3);
+        List<ContractTemplate> globals = ContractCombatPolicy.BuildGeneratedTemplates(doc);
+        for (int i = 0; i < globals.Count; i++)
+            False(string.Equals(globals[i].ContextFilter, "Grum the Vile", StringComparison.OrdinalIgnoreCase),
+                "global board never targets a named individual");
+
+        // A generated offer persisted before this rule is dropped at template build time.
+        ContractDocument legacy = NewDoc();
+        ContractGeneratedCombatOffer offer = new ContractGeneratedCombatOffer();
+        offer.Category = ContractCategory.Local; offer.BoardRevision = legacy.LocalBoardRevision;
+        offer.BoardZone = "Hidden Hills"; offer.TargetZone = "Hidden Hills"; offer.EnemyName = "Trevor Ulchand";
+        offer.EnemyLevel = 10; offer.TargetCount = 1; offer.RewardXpBasisPoints = 500;
+        legacy.GeneratedCombatOffers.Add(offer);
+        Equal(0, ContractCombatPolicy.BuildGeneratedTemplates(legacy).Count, "legacy named offer no longer renders as a contract");
     }
 
     private static void TestLegacyGeneratedOfferQualityNormalization()
@@ -341,11 +385,11 @@ internal static class ContractCombatPolicyTests
         bool treasureChest = false, bool summonedByPlayer = false, bool temporaryPvpProxy = false,
         bool hasCharacter = true, bool ownedActor = false, bool invulnerable = false, bool vendor = false,
         bool knownFriendlyFaction = false, bool bossRewardActor = false, bool requireAlive = true,
-        bool alive = true, bool forbiddenPetIdentity = false)
+        bool alive = true, bool forbiddenPetIdentity = false, bool namedIndividualActor = false)
     {
         return ContractEnemyEligibilityPolicy.IsEligible(active, simBacked, neverAggro, miningNode, treasureChest,
             summonedByPlayer, temporaryPvpProxy, hasCharacter, ownedActor, invulnerable, vendor, knownFriendlyFaction,
-            bossRewardActor, requireAlive, alive, forbiddenPetIdentity);
+            bossRewardActor, requireAlive, alive, forbiddenPetIdentity, namedIndividualActor);
     }
 
     private static ContractEnemyObservation Obs(string zone, string name, int min, int max, int count)
