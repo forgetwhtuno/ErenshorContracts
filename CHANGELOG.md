@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — mob-only contract targets
+## 0.4.5 — mob-only contract targets
 
 - Contract generation is now limited to ordinary mobs. Named individuals are excluded at discovery using live actor evidence: dialog actors, quest givers (`MyQuests` / `questToAssign`), quest-completing kill targets, achievement actors (`SetAchievementOnDefeat` / `SetAchievementOnSpawn`), raid-managed actors, and rare named spawn variants (prefab identity against the spawn point's `RareSpawns`). Boss-reward exclusion is unchanged.
 - Added `ContractMobTargetPolicy`: a Unity-free decision holding both the structural named-individual evidence and a conservative display-name shape test used for persisted catalog records, which no longer carry that evidence. A name observed on two or more live actors at once still counts as a mob type.

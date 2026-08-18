@@ -17,7 +17,7 @@ namespace ErenshorContracts
     {
         internal const string PluginGuid = "forgetwhtuno.erenshor.contracts";
         internal const string PluginName = "Erenshor Contracts";
-        internal const string PluginVersion = "0.4.4";
+        internal const string PluginVersion = "0.4.5";
 
         internal static ErenshorContractsPlugin Instance;
         private ContractsSuiteAuraProvider _auraProvider;
