@@ -21,12 +21,14 @@ namespace ErenshorContracts
             bool bossRewardActor,
             bool requireAlive,
             bool alive,
-            bool forbiddenPetIdentity)
+            bool forbiddenPetIdentity,
+            bool namedIndividualActor)
         {
             if (!active || simBacked || neverAggro || miningNode || treasureChest || summonedByPlayer || temporaryPvpProxy)
                 return false;
             if (!hasCharacter || ownedActor || invulnerable || vendor || knownFriendlyFaction || bossRewardActor || forbiddenPetIdentity)
                 return false;
+            if (namedIndividualActor) return false;
             if (requireAlive && !alive) return false;
             return true;
         }

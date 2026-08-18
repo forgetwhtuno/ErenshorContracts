@@ -15,6 +15,7 @@ internal static class ContractStoreTests
         TestNoLegacyDataMeansNoClaim();
         TestAlreadyClaimedMeansNoSecondClaimEvenAfterDelete();
         TestV2GameplayAndRewardLedgerRoundTrip();
+        TestLegacyGeneratedTargetNormalizationDoesNotRewriteAcceptedContract();
         TestV2ApplyingBecomesOutcomeUnknownAfterRestart();
         TestV2PreparedRemainsSafeToRetry();
         TestV2TruncatedLedgerRecoversFromBackup();
@@ -186,6 +187,44 @@ internal static class ContractStoreTests
             Equal(RewardComponentStatus.Applied, got.ItemRewardStatus, "item applied status persisted");
             Equal(2, got.AppliedItemCount, "actual item count persisted");
             True(loaded.Claimed.Contains("claimed-id"), "claimed set persisted");
+        }
+        finally { Cleanup(root); }
+    }
+
+    private static void TestLegacyGeneratedTargetNormalizationDoesNotRewriteAcceptedContract()
+    {
+        string root = NewTempDir();
+        try
+        {
+            string path = Path.Combine(root, "contracts.dat");
+            ContractDocument doc = new ContractDocument();
+            doc.LocalBoardRevision = 4;
+            doc.LocalBoardZone = "Hidden Hills"; // legacy field retained for compatibility
+            ContractEnemyRecord enemy = new ContractEnemyRecord();
+            enemy.Zone = "Hidden Hills"; enemy.EnemyName = "Trevor Ulchand";
+            enemy.MinLevel = 10; enemy.MaxLevel = 10; enemy.ObservedCount = 1;
+            doc.EnemyCatalog.Add(enemy);
+            ContractGeneratedCombatOffer generated = new ContractGeneratedCombatOffer();
+            generated.Category = ContractCategory.Local; generated.BoardRevision = 4; generated.BoardZone = "Hidden Hills";
+            generated.TargetZone = "Hidden Hills"; generated.EnemyName = "Trevor Ulchand"; generated.EnemyLevel = 10;
+            generated.TargetCount = 10; generated.RewardXpBasisPoints = 500;
+            doc.GeneratedCombatOffers.Add(generated);
+
+            ContractInstance active = NewActive("local|4|Hidden Hills|p1|builtin_combat|old");
+            active.Category = ContractCategory.Local; active.OriginZone = "Hidden Hills"; active.TargetZone = "Hidden Hills";
+            active.ProgressKey = ContractCombatPolicy.NativeKillProgressKey; active.ContextFilter = "Trevor Ulchand";
+            active.Target = 10; active.Progress = 3;
+            doc.Active.Add(active);
+
+            new ContractStore(path).Save(doc);
+            string warning;
+            ContractDocument loaded = new ContractStore(path).Load(out warning);
+            Equal(string.Empty, warning, "legacy generated quality load warning");
+            Equal("Hidden Hills", loaded.LocalBoardZone, "legacy current persisted LocalBoardZone remains readable");
+            Equal(1, loaded.GeneratedCombatOffers[0].TargetCount, "unaccepted persisted named offer narrowed on read");
+            Equal(10, loaded.Active[0].Target, "accepted old contract target remains untouched");
+            Equal(3, loaded.Active[0].Progress, "accepted old contract progress remains untouched");
+            Equal("Hidden Hills", loaded.Active[0].OriginZone, "accepted old contract origin remains self-contained");
         }
         finally { Cleanup(root); }
     }

@@ -82,5 +82,7 @@ namespace ErenshorContracts
         public static bool SetShowLauncher(bool visible) { ErenshorContractsPlugin p = ErenshorContractsPlugin.Instance; if (p == null) return false; p.SetShowStandaloneLauncher(visible); return true; }
         public static bool ResetPanelPosition() { ErenshorContractsPlugin p = ErenshorContractsPlugin.Instance; if (p == null) return false; p.ResetWindowPosition(); return true; }
         public static bool ResetLauncherPosition() { ErenshorContractsPlugin p = ErenshorContractsPlugin.Instance; if (p == null) return false; p.ResetLauncherPosition(); return true; }
+        // Equivalent to `/contracts diag rewards` for Suite consumers; it deliberately exposes no local paths.
+        public static string GetRewardDiagnostics() { ErenshorContractsPlugin p = ErenshorContractsPlugin.Instance; return p == null ? "contracts_unavailable" : p.ControlRewardDiagnostics(); }
     }
 }

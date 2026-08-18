@@ -13,7 +13,7 @@ internal static class ContractCoreTests
         TestBoardDeterminismNoDuplicatesAndProviderPriority();
         TestRewardPolicy();
         TestActivePlayRefreshCadenceAndOfflineNeutrality();
-        TestLocalBoardZoneStableUntilRefresh();
+        TestLocalBoardUsesRevisionPlusCurrentZone();
         TestActivePlayEligibility();
         TestWholeRevisionRefreshNoImmediateReplacement();
         TestAbandonReacceptWithoutReroll();
@@ -30,6 +30,7 @@ internal static class ContractCoreTests
         TestActivePlayOverflowSafety();
         TestPlannedXpAmountLocksAcrossRetry();
         TestRewardComponentLedgerExactlyOnce();
+        TestZoneBoardChangeDoesNotChangeAcceptedClaimIdentity();
         TestMixedComponentRetry();
         TestUnknownRewardLocksAbandonAndCommit();
         TestAppliedRewardSummary();
@@ -126,26 +127,48 @@ internal static class ContractCoreTests
         Equal(1, doc.GlobalBoardRevision, "one global revision");
     }
 
-    private static void TestLocalBoardZoneStableUntilRefresh()
+    private static void TestLocalBoardUsesRevisionPlusCurrentZone()
     {
         ContractDocument doc = NewDocumentWithSchedule();
-        True(ContractCore.EnsureLocalBoardZone(doc, "Home"), "initial local board binds current zone");
-        Equal("Home", doc.LocalBoardZone, "local board origin stored");
-        False(ContractCore.EnsureLocalBoardZone(doc, "Forest"), "zoning cannot rebind local board before refresh");
-        Equal("Home", doc.LocalBoardZone, "local board remains stable while travelling");
+        long originalDeadline = doc.NextLocalRefreshAtSeconds;
+        int originalRevision = doc.LocalBoardRevision;
 
-        List<ContractOffer> before = ContractCore.BuildOffers(ContractCategory.Local, doc.LocalBoardRevision, doc.LocalBoardZone, "p1", Builtins(), doc, 3);
+        List<ContractOffer> home = ContractCore.BuildOffers(ContractCategory.Local, doc.LocalBoardRevision, "Home", "p1", Builtins(), doc, 3);
+        List<ContractOffer> homeAgain = ContractCore.BuildOffers(ContractCategory.Local, doc.LocalBoardRevision, "Home", "p1", Builtins(), doc, 3);
+        List<ContractOffer> forest = ContractCore.BuildOffers(ContractCategory.Local, doc.LocalBoardRevision, "Forest", "p1", Builtins(), doc, 3);
+        List<ContractOffer> homeAfterTravel = ContractCore.BuildOffers(ContractCategory.Local, doc.LocalBoardRevision, "Home", "p1", Builtins(), doc, 3);
+
+        Equal(home[0].OccurrenceId, homeAgain[0].OccurrenceId, "same revision and zone returns same local board");
+        NotEqual(home[0].OccurrenceId, forest[0].OccurrenceId, "same revision different zone has zone-correct local identity");
+        Equal(home[0].OccurrenceId, homeAfterTravel[0].OccurrenceId, "A to B to A returns original A local offer set");
+
+        ContractCore.HandleZoneTransition(doc, "Home", "Forest");
+        Equal(originalRevision, doc.LocalBoardRevision, "zoning does not advance local board revision");
+        Equal(originalDeadline, doc.NextLocalRefreshAtSeconds, "zoning does not reset local refresh deadline");
+
+        ContractInstance accepted = ContractCore.Accept(doc, home[0], "Home", DateTime.UtcNow);
+        True(accepted != null, "local offer accepted in A");
+        Equal("Home", accepted.OriginZone, "accepted local contract retains A origin");
+        List<ContractOffer> forestAfterAccept = ContractCore.BuildOffers(ContractCategory.Local, doc.LocalBoardRevision, "Forest", "p1", Builtins(), doc, 3);
+        True(forestAfterAccept.Count > 0, "unaccepted local board remains available in B");
+        True(forestAfterAccept[0].OccurrenceId.IndexOf("|Forest|", StringComparison.OrdinalIgnoreCase) >= 0,
+            "B local occurrence identity carries B zone");
+        Equal("Home", accepted.OriginZone, "building B board does not rewrite accepted A origin");
+
+        List<ContractOffer> globalHome = ContractCore.BuildOffers(ContractCategory.Global, doc.GlobalBoardRevision, "Home", "p1", Builtins(), doc, 2);
+        List<ContractOffer> globalForest = ContractCore.BuildOffers(ContractCategory.Global, doc.GlobalBoardRevision, "Forest", "p1", Builtins(), doc, 2);
+        Equal(globalHome[0].OccurrenceId, globalForest[0].OccurrenceId, "global board identity unaffected by current zone");
+
         ContractCore.AdvanceActivePlay(doc, 45 * 60, 45, 120);
-        Equal(string.Empty, doc.LocalBoardZone, "local refresh releases prior board origin");
-        True(ContractCore.EnsureLocalBoardZone(doc, "Forest"), "refreshed local board binds current zone");
-        List<ContractOffer> after = ContractCore.BuildOffers(ContractCategory.Local, doc.LocalBoardRevision, doc.LocalBoardZone, "p1", Builtins(), doc, 3);
-        Equal("Forest", doc.LocalBoardZone, "new local board origin stored");
-        False(ContainsOffer(after, before[0].OccurrenceId), "refreshed local board does not reuse prior occurrence");
+        Equal(originalRevision + 1, doc.LocalBoardRevision, "local refresh still advances normally from active play");
+        True(doc.NextLocalRefreshAtSeconds > originalDeadline, "local refresh advances deadline normally");
 
+        // The legacy persisted field remains readable/migratable, but no longer controls runtime
+        // available-board identity.
         ContractDocument legacy = NewDocumentWithSchedule();
-        legacy.Claimed.Add("local|0|OldHome|p1|builtin|local_patrol");
-        True(ContractCore.EnsureLocalBoardZone(legacy, "LoginHome"), "V1 current revision infers prior local board origin");
-        Equal("OldHome", legacy.LocalBoardZone, "V1 migration does not create a one-time zoning reroll");
+        legacy.LocalBoardZone = "OldHome";
+        False(ContractCore.EnsureLocalBoardZone(legacy, "LoginHome"), "legacy persisted board zone remains readable without destructive migration");
+        Equal("OldHome", legacy.LocalBoardZone, "legacy board-origin field remains intact");
     }
 
     private static void TestActivePlayEligibility()
@@ -416,6 +439,27 @@ internal static class ContractCoreTests
         False(ContractCore.PrepareRewardComponent(doc, active.OccurrenceId, RewardComponentKind.Xp), "unknown outcome cannot retry");
         False(ContractCore.Abandon(doc, active.OccurrenceId), "unknown outcome cannot discard ledger");
         True(ContractCore.CommitClaim(doc, active.OccurrenceId) == null, "unknown outcome cannot commit");
+    }
+
+    private static void TestZoneBoardChangeDoesNotChangeAcceptedClaimIdentity()
+    {
+        ContractDocument doc = NewDocumentWithSchedule();
+        List<ContractOffer> home = ContractCore.BuildOffers(ContractCategory.Local, 0, "Home", "p1", Builtins(), doc, 3);
+        ContractInstance active = ContractCore.Accept(doc, home[0], "Home", DateTime.UtcNow);
+        True(active != null, "accepted local reward identity fixture");
+        string occurrence = active.OccurrenceId;
+        // This regression isolates occurrence/claim identity from the separate reward-ledger tests.
+        active.RewardXpBasisPoints = 0;
+        active.RewardGoldAmount = 0;
+        active.RewardItemQuantity = 0;
+        active.Progress = active.Target;
+
+        // Building another zone's available board cannot mutate the accepted occurrence/claim key.
+        ContractCore.BuildOffers(ContractCategory.Local, 0, "Forest", "p1", Builtins(), doc, 3);
+        Equal(occurrence, active.OccurrenceId, "zoning available board cannot change accepted claim identity");
+        ContractInstance claimed = ContractCore.ClaimRecordOnly(doc, occurrence);
+        True(claimed != null, "accepted contract claims under original occurrence");
+        True(ContractCore.ClaimRecordOnly(doc, occurrence) == null, "zone change cannot create duplicate claim opportunity");
     }
 
     private static void TestAppliedRewardSummary()

@@ -53,7 +53,7 @@ Before enabling XP, inspect the exact installed `Erenshor_Data/Managed/Assembly-
 
 - [ ] Main window remains compact (default 690×540), draggable, resizable, and scrollable.
 - [ ] LOCAL and GLOBAL sections are visually distinct.
-- [ ] Local header shows the persisted board-origin zone.
+- [ ] Local header shows the current playable zone.
 - [ ] Top countdown reads `LOCAL REFRESH  HH:MM:SS    GLOBAL REFRESH  HH:MM:SS` and visibly ticks once per active-play second.
 - [ ] Closing/reopening the panel does not reset either countdown.
 - [ ] Countdown text changes do not rebuild the whole retained row hierarchy each second.
@@ -61,18 +61,18 @@ Before enabling XP, inspect the exact installed `Erenshor_Data/Managed/Assembly-
 - [ ] Generated Global cards always name a concrete destination zone.
 - [ ] States are understandable: AVAILABLE, ACTIVE, READY TO CLAIM, CLAIMED, retry-ready/applied/unknown reward states.
 - [ ] Older accepted legacy work remains under its real Local/Global section after a refresh.
-- [ ] When away from the Local board origin, new Local offers show a return-to-board state and cannot be accepted.
+- [ ] After zoning, new Local offers immediately belong to the current playable zone and remain normally mouse-acceptible.
 - [ ] If six active contracts are already retained, a seventh Accept reports the active-contract limit instead of silently doing nothing.
 
 ## 5. Local combat objective matrix
 
 - [ ] Enter Hidden Hills (or another normal combat zone) with several ordinary native enemies loaded.
 - [ ] Within the bounded scan cadence, new Local offers overwhelmingly become native-enemy culls.
-- [ ] Every generated Local target is actually present in the current Local board-origin zone at generation time.
+- [ ] Every generated Local target is actually present in the current playable zone at generation time.
 - [ ] Friendly Sims, player actors, vendors, mining/resources, treasure chests, summons/pets, invulnerable actors, known friendly/debug factions, detected PvP proxies, and `BossXp > 0` actors never become cull targets.
 - [ ] Targets outside the ±5 level-distance policy are not selected.
 - [ ] When level fit is equal, a visibly common enemy type is preferred over a one-off/sparse type.
-- [ ] Local kill counts are 6–9.
+- [ ] Repeatable Local kill counts are deterministic and capped by observed population; likely proper-name targets are count one.
 - [ ] Killing the exact target in the exact zone advances once.
 - [ ] The same enemy name in another zone does not advance the contract.
 - [ ] A despawn with no attributed native kill line does not advance.
@@ -92,7 +92,7 @@ Before enabling XP, inspect the exact installed `Erenshor_Data/Managed/Assembly-
 - [ ] Global uses only previously observed qualifying native zone/enemy pairs.
 - [ ] Level policy remains ±5 from the player's current level range at generation.
 - [ ] More plentiful equal-level enemy types are preferred.
-- [ ] Global kill counts are 10–14.
+- [ ] Repeatable Global kill counts are deterministic and capped by persisted observed population; likely proper-name targets are count one.
 - [ ] Traveling to the destination and killing the target advances; killing it in the wrong zone does not.
 - [ ] Once generated, later discoveries/spawn churn do not silently reroll the current Global revision.
 - [ ] No vague Long Watch/Grand Tour/Contract Regular/Expedition objective is newly registered into the built-in Global board.
@@ -114,7 +114,7 @@ Older persisted Road Check / Perimeter Sweep / Wayfarer / Local Circuit / Long W
 - [ ] Local refresh advances the whole Local category revision and binds the new revision to the current playable zone.
 - [ ] Global refresh advances the whole Global category revision independently; an empty revision remains retryable until cross-zone combat evidence exists.
 - [ ] Accepted older-revision contracts survive refresh.
-- [ ] Repeated zone-hopping before 45 active minutes yields no fresh Local board.
+- [ ] Repeated zone-hopping before 45 active minutes changes locality but not revision/deadline; A → B → A returns the same A board.
 - [ ] Active contract count remains capped at six to prevent indefinite backlog accumulation.
 - [ ] Refresh arithmetic behaves safely at large/corrupt timer values without overflow loops.
 
@@ -175,12 +175,12 @@ Future mixed-component rule (once gold/items have proven adapters):
 
 ## 11. Persistence / migrations / malformed state
 
-- [ ] V3 round-trip preserves revisions, Local board origin, combat generation markers, observed enemy catalog including population count, generated target sets, active time, claimed set, objective state, reward definitions, planned amount, statuses, applied amounts, and target zone.
+- [ ] V3 round-trip preserves revisions, the legacy LocalBoardZone field, per-zone generated combat sets, observed enemy catalog including population count, active time, claimed set, objective state, reward definitions, planned amount, statuses, applied amounts, and target zone.
 - [ ] V1 normal active contract remains loadable.
 - [ ] V1 legacy reward-pending XP occurrence migrates to `OutcomeUnknown`.
 - [ ] V1 no-pending XP occurrence remains unattempted.
 - [ ] Legacy/provider record-only active contract does not gain synthetic XP.
-- [ ] V1 current Local board origin is inferred from current-revision active/claimed occurrence evidence where possible.
+- [ ] V1/V2/V3 legacy LocalBoardZone data remains readable; runtime available-board locality does not depend on it.
 - [ ] Truncated V2 reward-ledger active row rejects primary and recovers a valid `.bak`.
 - [ ] Corrupt primary recovers valid `.bak` and preserves `.corrupt-*` diagnostic copy.
 - [ ] Missing primary recovers valid `.bak`.
@@ -235,15 +235,15 @@ Suggested live run:
 3. Accept 2–3 culls, kill targets naturally with both player and party-Sim finishing blows, and verify exact once-only progress.
 4. Reopen the board repeatedly while the countdown runs; offers and timers must not reset.
 5. Observe claimed slots remain claimed/empty rather than instantly replacing themselves.
-6. Zone repeatedly before 45 active minutes and verify there is still no fresh Local board/origin reroll.
+6. Zone repeatedly before 45 active minutes: each playable zone gets its deterministic same-revision Local board, and returning to an earlier zone restores that earlier set without changing the refresh timer.
 7. In the second zone, let Contracts observe native enemies; if Global was empty, verify it can now acquire a verified cross-zone target for the current revision.
 8. Travel to that Global destination, verify its explicit LOCATION/objective remain stable, and progress it only on the correct enemy in the correct zone.
-9. Cross ~45 active minutes: one whole Local revision appears and binds to the zone currently being played.
+9. Cross ~45 active minutes: one whole Local revision advances; the current zone gets its new revision-specific board and other zones resolve their new-revision board when visited.
 10. Accept new Local combat work without losing older accepted work; if six actives are retained, verify the explicit cap message.
 11. Cross ~90 active minutes: Local advances again independently.
 12. Cross ~120 active minutes: Global advances once while accepted old Global work survives.
 13. Logout completely for several wall-clock minutes, log back in, and verify no offline countdown/objective jump.
-14. Reload and verify active/claimed progress, target locations, generated target sets, observed enemy catalog, board origins, countdowns, and reward ledgers reconstruct correctly.
+14. Reload and verify active/claimed progress, target locations, per-zone generated target sets, observed enemy catalog, legacy board-origin data, countdowns, and reward ledgers reconstruct correctly.
 15. Confirm legacy accepted travel/time contracts from an upgraded sidecar still function, but no new vague built-in Global objective appears.
 16. Confirm the overall cadence feels like optional old-MMO grinding rather than a daily-task treadmill.
 
@@ -251,7 +251,7 @@ Anti-exploit checks during the run:
 
 - [ ] claim -> no instant replacement;
 - [ ] abandon/reaccept -> same occurrence, reset progress, no reroll;
-- [ ] zone hop -> no Local reroll;
+- [ ] zone hop -> locality changes without revision/deadline reset; return to a prior zone -> same prior-zone set;
 - [ ] board reopen -> deterministic;
 - [ ] offline time -> no cadence progress;
 - [ ] duplicate death/log callbacks -> no duplicate kill credit;
@@ -280,7 +280,7 @@ Anti-exploit checks during the run:
 2. Open Contracts after the first enemy scan.
 3. Verify the Local board contains native enemy names that are actually alive/available in this zone.
 4. Verify every combat card shows `LOCATION: <current Local board zone>`.
-5. Verify counts are 6–9 and objective text names both enemy and zone.
+5. Verify repeatable counts are population-bounded, proper-name targets are one, and objective text names both target and zone.
 6. Kill/respawn mobs without waiting for the Local refresh; the offered target identities must not reroll.
 7. Zone away and reopen; the Local board remains tied to its persisted origin until its active-play refresh.
 8. At Local countdown zero, verify one category refresh occurs and the new Local board binds the current playable zone.
@@ -291,7 +291,7 @@ Anti-exploit checks during the run:
 2. Visit at least two level-appropriate hostile zones and let the native scan run.
 3. Wait for / test the next Global refresh boundary.
 4. Verify Global cards name a different exact destination zone and a native enemy seen there.
-5. Verify counts are 10–14.
+5. Verify repeatable counts are population-bounded and any proper-name target is one.
 6. Verify the current zone is not selected as a Global destination at generation.
 7. New enemy discoveries during the same Global revision must not reroll existing Global rows.
 
@@ -340,3 +340,16 @@ For an accepted kill contract:
 - Hot unload/reload under Lunaris while no kill is occurring.
 - Hot unload shortly after a kill.
 - Verify Harmony patches are removed on unload and no stale death candidate survives scene change/reload.
+
+## 0.4.4 locality / target-quality release checks
+
+- [ ] In Hidden Hills, record the Local offer set and refresh countdown.
+- [ ] Zone to Faerie's Brake without advancing a refresh: the AVAILABLE Local section changes to Faerie's Brake while the Local revision/countdown does not reset.
+- [ ] Return to Hidden Hills in the same revision: the prior Hidden Hills offer set returns rather than rerolling.
+- [ ] Accept a Hidden Hills Local contract, zone away, and verify the accepted card retains `LOCATION: Hidden Hills` while new unaccepted Local offers follow the current zone.
+- [ ] Ordinary repeated enemies render as repeatable/grind objectives with population-bounded counts.
+- [ ] A likely proper-name target, if selected at all, is bounty-style and requires one kill; never `Kill 9/10 <proper name>`.
+- [ ] Complete and Claim one repaired Local contract; verify the exact Gold and direct personal XP deltas, retry Claim, and verify no second grant.
+- [ ] Repeat a Claim after zoning and verify occurrence identity/exactly-once reward state is unchanged.
+- [ ] Where safely testable, enter raid state before Claim and verify whole-claim deferral remains unchanged.
+

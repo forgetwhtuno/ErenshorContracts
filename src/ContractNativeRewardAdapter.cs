@@ -1,5 +1,4 @@
 using System;
-using System.Reflection;
 
 namespace ErenshorContracts
 {
@@ -16,8 +15,11 @@ namespace ErenshorContracts
     // rewards directly mutate PlayerInv.Gold (Int32); GameManager.SaveGameData serializes it.
     internal static class ContractNativeRewardAdapter
     {
-        private static bool _methodResolved;
-        private static MethodInfo _addExperience;
+        // Both calls are compiled against the installed game assembly, matching the proven PvP
+        // reward path. The remaining runtime checks guard player/inventory readiness, not API
+        // discovery through reflection.
+        internal static bool XpApiAvailable { get { return true; } }
+        internal static bool GoldApiAvailable { get { try { return GameData.PlayerInv != null; } catch { return false; } } }
 
         internal static bool TryPreviewXp(int basisPoints, out int xpAmount)
         {
@@ -51,7 +53,6 @@ namespace ErenshorContracts
             if (ContractCore.IsRewardComponentRequired(contract, RewardComponentKind.Xp) && contract.XpRewardStatus != RewardComponentStatus.Applied)
             {
                 if (!nativeXpEnabled) { reason = "XP rewards are disabled by config"; return false; }
-                if (ResolveAddExperience() == null) { reason = "GameData.AddExperience(int,bool) is unavailable in the current runtime"; return false; }
                 int threshold;
                 if (!TryReadExperienceThreshold(out threshold)) { reason = "current level XP threshold is unavailable"; return false; }
                 int xp = contract.PlannedXpAmount > 0 ? contract.PlannedXpAmount : ContractRewardPolicy.CalculateXpAmount(threshold, contract.RewardXpBasisPoints);
@@ -75,9 +76,7 @@ namespace ErenshorContracts
             outcome = string.Empty; invocationAttempted = false;
             if (plan == null || plan.XpAmount <= 0) { outcome = "invalid XP reward plan"; return false; }
             if (GameData.RaidActive) { outcome = "raid began before XP grant"; return false; }
-            MethodInfo method = ResolveAddExperience();
-            if (method == null) { outcome = "native XP method unavailable"; return false; }
-            try { invocationAttempted = true; method.Invoke(null, new object[] { plan.XpAmount, false }); outcome = "+" + plan.XpAmount.ToString() + " XP"; return true; }
+            try { invocationAttempted = true; GameData.AddExperience(plan.XpAmount, false); outcome = "+" + plan.XpAmount.ToString() + " XP"; return true; }
             catch (Exception ex) { outcome = "native XP outcome unknown (" + ex.GetType().Name + ")"; return false; }
         }
 
@@ -93,9 +92,7 @@ namespace ErenshorContracts
                 invocationAttempted = true;
                 GameData.PlayerInv.Gold = before + plan.GoldAmount;
                 if (GameData.PlayerInv.Gold != before + plan.GoldAmount) { outcome = "native Gold postcondition did not hold"; return false; }
-                // Native vendor/trade flows update this label directly. UI refresh is best-effort and
-                // deliberately outside the irreversible mutation outcome.
-                try { if (GameData.PlayerInv.GoldTXT != null) GameData.PlayerInv.GoldTXT.text = GameData.PlayerInv.Gold.ToString(); } catch { }
+                GameData.PlayerInv.UpdatePlayerInventory();
                 outcome = "+" + plan.GoldAmount.ToString() + " Gold";
                 return true;
             }
@@ -104,8 +101,7 @@ namespace ErenshorContracts
 
         internal static string CapabilitySummary(bool nativeXpEnabled)
         {
-            return ResolveAddExperience() == null ? "Gold rewards enabled; XP rewards unavailable in this runtime" :
-                (nativeXpEnabled ? "Gold and direct personal XP rewards enabled outside raids" : "Gold rewards enabled; XP disabled by config");
+            return nativeXpEnabled ? "Gold and direct personal XP rewards enabled outside raids" : "Gold rewards enabled; XP disabled by config";
         }
 
         private static bool TryPrepareGold(int amount, out int current, out string reason)
@@ -130,28 +126,15 @@ namespace ErenshorContracts
             return value;
         }
 
-        private static MethodInfo ResolveAddExperience()
-        {
-            if (_methodResolved) return _addExperience;
-            _methodResolved = true;
-            try { _addExperience = typeof(GameData).GetMethod("AddExperience", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static, null, new Type[] { typeof(int), typeof(bool) }, null); }
-            catch { _addExperience = null; }
-            return _addExperience;
-        }
-
         private static bool TryReadExperienceThreshold(out int threshold)
         {
             threshold = 0;
             try
             {
                 if (GameData.PlayerControl == null || GameData.PlayerControl.Myself == null || GameData.PlayerControl.Myself.MyStats == null) return false;
-                object stats = GameData.PlayerControl.Myself.MyStats;
-                Type type = stats.GetType();
-                PropertyInfo property = type.GetProperty("ExperienceToLevelUp", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                object raw = property == null ? null : property.GetValue(stats, null);
-                if (raw == null) { FieldInfo field = type.GetField("ExperienceToLevelUp", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance); if (field != null) raw = field.GetValue(stats); }
-                if (raw == null) return false;
-                threshold = Convert.ToInt32(raw); return threshold > 0;
+                Stats stats = GameData.PlayerControl.Myself.MyStats;
+                threshold = stats.ExperienceToLevelUp;
+                return threshold > 0;
             }
             catch { threshold = 0; return false; }
         }

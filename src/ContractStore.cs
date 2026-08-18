@@ -205,6 +205,15 @@ namespace ErenshorContracts
                     }
                 }
 
+                if (isV3)
+                {
+                    // Generated board rows are unaccepted offers, so current target-quality caps
+                    // may safely narrow legacy impossible/high-count rows. Accepted A rows remain
+                    // self-contained and are deliberately never rewritten.
+                    for (int i = 0; i < document.GeneratedCombatOffers.Count; i++)
+                        ContractCombatPolicy.NormalizeGeneratedOfferForCurrentEvidence(document, document.GeneratedCombatOffers[i]);
+                }
+
                 if (isV1)
                 {
                     foreach (string id in legacyPending)

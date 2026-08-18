@@ -17,7 +17,7 @@ namespace ErenshorContracts
     {
         internal const string PluginGuid = "forgetwhtuno.erenshor.contracts";
         internal const string PluginName = "Erenshor Contracts";
-        internal const string PluginVersion = "0.4.1";
+        internal const string PluginVersion = "0.4.5";
 
         internal static ErenshorContractsPlugin Instance;
         private ContractsSuiteAuraProvider _auraProvider;
@@ -43,7 +43,9 @@ namespace ErenshorContracts
         private ContractsConfigEntry<int> _localRefreshMinutes;
         private ContractsConfigEntry<int> _globalRefreshMinutes;
         private ContractsConfigEntry<bool> _enableNativeXpRewards;
+        private ContractsConfigEntry<int> _rewardConfigVersion;
         private ContractsConfigEntry<string> _profileKey;
+        private string _rewardConfigSource = "unresolved";
 
         private ContractStore _store;
         private ContractDocument _document;
@@ -116,6 +118,7 @@ namespace ErenshorContracts
             }
             _settings = new ContractsSettings();
             Config.Register(ref _settings);
+            MigrateRewardConfig();
             InitializeConfigEntries();
             SuiteUiPolicy.InitializeHubPresence(this);
 
@@ -170,7 +173,25 @@ namespace ErenshorContracts
             _localRefreshMinutes = new ContractsConfigEntry<int>(delegate { return _settings.LocalRefreshMinutes; }, delegate(int v) { _settings.LocalRefreshMinutes = v; });
             _globalRefreshMinutes = new ContractsConfigEntry<int>(delegate { return _settings.GlobalRefreshMinutes; }, delegate(int v) { _settings.GlobalRefreshMinutes = v; });
             _enableNativeXpRewards = new ContractsConfigEntry<bool>(delegate { return _settings.EnableNativeXpRewards; }, delegate(bool v) { _settings.EnableNativeXpRewards = v; });
+            _rewardConfigVersion = new ContractsConfigEntry<int>(delegate { return _settings.RewardConfigVersion; }, delegate(int v) { _settings.RewardConfigVersion = v; });
             _profileKey = new ContractsConfigEntry<string>(delegate { return _settings.ProfileKey; }, delegate(string v) { _settings.ProfileKey = v; });
+        }
+
+        private void MigrateRewardConfig()
+        {
+            bool priorXpValue = _settings.EnableNativeXpRewards;
+            int priorSchema = _settings.RewardConfigVersion;
+            _rewardConfigSource = ContractRewardConfigMigrationPolicy.SourceLabel(priorXpValue, priorSchema);
+            if (!ContractRewardConfigMigrationPolicy.Apply(ref _settings.EnableNativeXpRewards, ref _settings.RewardConfigVersion)) return;
+            try
+            {
+                Config.Save();
+                Logging.LogInfo("Erenshor Contracts reward config migrated to schema " + ContractRewardConfigMigrationPolicy.CurrentSchema.ToString() + "; direct personal XP rewards enabled outside raids.");
+            }
+            catch (Exception ex)
+            {
+                Logging.LogWarning("Erenshor Contracts reward config migration could not be persisted: " + ex.GetType().Name + ". XP is enabled for this session and migration will retry next startup.");
+            }
         }
 
         private void Update()
@@ -239,7 +260,6 @@ namespace ErenshorContracts
                     {
                         ContractRefreshResult refresh = ContractCore.AdvanceActivePlay(
                             _document, 1, ControlLocalRefreshMinutes, ControlGlobalRefreshMinutes);
-                        if (refresh.LocalRefreshed) ContractCore.EnsureLocalBoardZone(_document, _currentZone);
                         int progressChanged = ContractCore.AddActiveSeconds(_document, _currentZone, 1);
                         MarkProgressDirty();
                         if (refresh.AnyRefreshed || progressChanged > 0) RebuildOffers();
@@ -252,7 +272,7 @@ namespace ErenshorContracts
                     _showStandaloneLauncherWithHub != null && _showStandaloneLauncherWithHub.Value);
                 if (_launcher != null) _launcher.Tick(showLauncher, _open);
                 if (_window != null) _window.Tick(ready && !_scopeTransitionBlocked && _open, _currentZone,
-                    _document == null ? string.Empty : _document.LocalBoardZone, _currentLocalOffers, _currentGlobalOffers, _document,
+                    _currentZone, _currentLocalOffers, _currentGlobalOffers, _document,
                     ContractCore.SecondsUntilLocalRefresh(_document), ContractCore.SecondsUntilGlobalRefresh(_document),
                     ControlNativeXpRewardsEnabled, CurrentClaimStatus(), AcceptOffer, Abandon, Claim);
 
@@ -405,7 +425,6 @@ namespace ErenshorContracts
             ContractKillCreditRuntime.Reset();
             ContractCore.AdvanceActivePlay(_document, 0, ControlLocalRefreshMinutes, ControlGlobalRefreshMinutes);
             _currentZone = CurrentZoneName();
-            ContractCore.EnsureLocalBoardZone(_document, _currentZone);
             MarkProgressDirty();
             RebuildOffers();
             Logging.LogInfo("Erenshor Contracts: active character scope resolved.");
@@ -557,18 +576,14 @@ namespace ErenshorContracts
             }
 
             string profile = _profileKey == null ? "local" : _profileKey.Value;
-            ContractCore.EnsureLocalBoardZone(_document, _currentZone);
 
             bool generatedChanged = false;
             if (_killHooksReady && _nativeEnemyScanReady)
             {
                 int playerLevel = CurrentPlayerLevel();
-                if (string.Equals(_document.LocalBoardZone, _currentZone, StringComparison.OrdinalIgnoreCase))
-                {
-                    generatedChanged |= ContractCombatPolicy.EnsureLocalCombatBoard(
-                        _document, _document.LocalBoardRevision, _document.LocalBoardZone,
-                        profile, playerLevel, ControlDailySlots, _latestEnemyObservations);
-                }
+                generatedChanged |= ContractCombatPolicy.EnsureLocalCombatBoard(
+                    _document, _document.LocalBoardRevision, _currentZone,
+                    profile, playerLevel, ControlDailySlots, _latestEnemyObservations);
                 generatedChanged |= ContractCombatPolicy.EnsureGlobalCombatBoard(
                     _document, _document.GlobalBoardRevision, _currentZone,
                     profile, playerLevel, ControlGlobalSlots);
@@ -579,7 +594,7 @@ namespace ErenshorContracts
                 available.AddRange(ContractCombatPolicy.BuildGeneratedTemplates(_document));
 
             _currentLocalOffers = ContractCore.BuildOffers(
-                ContractCategory.Local, _document.LocalBoardRevision, _document.LocalBoardZone,
+                ContractCategory.Local, _document.LocalBoardRevision, _currentZone,
                 profile, available, _document, ControlDailySlots);
             _currentGlobalOffers = ContractCore.BuildOffers(
                 ContractCategory.Global, _document.GlobalBoardRevision, _currentZone,
@@ -634,16 +649,9 @@ namespace ErenshorContracts
                 SetClaimStatus("Active contract limit reached (" + ContractCore.MaxActiveContracts.ToString() + "). Finish or abandon an unstarted contract before accepting another.");
                 return;
             }
+            // Available Local work belongs to the current playable zone. Accepted work captures
+            // that zone permanently in OriginZone; later zoning changes only the unaccepted board.
             string origin = _currentZone;
-            if (string.Equals(ContractCategory.Normalize(offer.Template.Category), ContractCategory.Local, StringComparison.Ordinal))
-            {
-                origin = _document == null ? string.Empty : _document.LocalBoardZone;
-                if (!string.Equals(_currentZone, origin, StringComparison.OrdinalIgnoreCase))
-                {
-                    SetClaimStatus("This Local board belongs to " + ContractCore.Clean(origin, 60) + " until its next refresh. Return there to accept new Local work.");
-                    return;
-                }
-            }
             if (ContractCore.Accept(_document, offer, origin, DateTime.UtcNow) != null)
             {
                 MarkDirty();
@@ -923,6 +931,31 @@ namespace ErenshorContracts
         internal int ControlLocalRefreshMinutes { get { return _localRefreshMinutes == null ? 45 : Math.Max(15, Math.Min(240, _localRefreshMinutes.Value)); } }
         internal int ControlGlobalRefreshMinutes { get { return _globalRefreshMinutes == null ? 120 : Math.Max(60, Math.Min(480, _globalRefreshMinutes.Value)); } }
         internal bool ControlNativeXpRewardsEnabled { get { return _enableNativeXpRewards != null && _enableNativeXpRewards.Value; } }
+        internal int ControlRewardConfigVersion { get { return _rewardConfigVersion == null ? 0 : _rewardConfigVersion.Value; } }
+        internal string ControlRewardConfigSource { get { return _rewardConfigSource ?? "unknown"; } }
+        internal string ControlRewardDiagnostics()
+        {
+            bool raid = false;
+            try { raid = GameData.RaidActive; } catch { }
+            ContractInstance candidate = _document == null ? null : _document.Active.FirstOrDefault(delegate(ContractInstance x) { return x != null && x.IsComplete; });
+            string eligible = "no_ready_claim";
+            if (candidate != null)
+            {
+                ContractRewardGrantPlan ignored;
+                string reason;
+                eligible = ContractNativeRewardAdapter.TryPrepare(candidate, ControlNativeXpRewardsEnabled, out ignored, out reason) ? "true" : "false:" + ContractCore.Clean(reason, 80);
+            }
+            string last = CurrentClaimStatus();
+            if (string.IsNullOrWhiteSpace(last)) last = "none";
+            return "xpConfigValue=" + ControlNativeXpRewardsEnabled.ToString().ToLowerInvariant() +
+                "; xpConfigSource=" + ControlRewardConfigSource +
+                "; rewardSchema=" + ControlRewardConfigVersion.ToString() +
+                "; raidActive=" + raid.ToString().ToLowerInvariant() +
+                "; xpApiAvailable=" + ContractNativeRewardAdapter.XpApiAvailable.ToString().ToLowerInvariant() +
+                "; goldApiAvailable=" + ContractNativeRewardAdapter.GoldApiAvailable.ToString().ToLowerInvariant() +
+                "; claimEligible=" + eligible +
+                "; lastClaimResult=" + ContractCore.Clean(last, 100);
+        }
         internal void RequestOpenBoard() { _pendingOpen = true; }
         internal void RequestCloseBoard() { _pendingClose = true; }
         internal bool ControlShowStandaloneLauncher { get { return _showStandaloneLauncherWithHub != null && _showStandaloneLauncherWithHub.Value; } }

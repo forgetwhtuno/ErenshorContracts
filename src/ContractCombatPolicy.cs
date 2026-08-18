@@ -12,7 +12,7 @@ namespace ErenshorContracts
         internal const string NativeKillProgressKey = "kill_native";
         internal const string NativeKillProviderId = "builtin_combat";
         internal const int MaxEnemyCatalogRecords = 512;
-        internal const int MaxGeneratedOffers = 12;
+        internal const int MaxGeneratedOffers = 128;
         internal const int MaxLevelDistance = 5;
 
         internal static bool IsUsableObservation(ContractEnemyObservation value)
@@ -49,10 +49,9 @@ namespace ErenshorContracts
 
         internal static int ResolveTargetCount(string category, string seed)
         {
-            uint hash = ContractCore.StableHash(seed ?? string.Empty);
-            if (string.Equals(ContractCategory.Normalize(category), ContractCategory.Global, StringComparison.Ordinal))
-                return 10 + (int)(hash % 5u); // 10-14
-            return 6 + (int)(hash % 4u);      // 6-9
+            // Compatibility helper for callers that do not carry observation evidence. Production
+            // generation always uses ContractEnemyTargetPolicy with the real observed count/name.
+            return ContractEnemyTargetPolicy.ResolveTargetCount(category, seed, "Generic Enemy", 4);
         }
 
         internal static int ResolveXpBasisPoints(string category, string seed)
@@ -63,30 +62,35 @@ namespace ErenshorContracts
             return 500 + (int)(hash % 201u);      // 5.00%-7.00%
         }
 
-        internal static string BuildTitle(string category, string enemyName, string zone)
+        internal static string BuildTitle(string category, string enemyName, string zone, bool exactNamedTarget)
         {
             string enemy = ContractCore.Clean(enemyName, 80);
             string targetZone = ContractCore.Clean(zone, 80);
+            if (exactNamedTarget)
+                return string.Equals(ContractCategory.Normalize(category), ContractCategory.Global, StringComparison.Ordinal) && targetZone.Length > 0
+                    ? targetZone + " Bounty" : enemy + " Bounty";
             if (string.Equals(ContractCategory.Normalize(category), ContractCategory.Global, StringComparison.Ordinal))
                 return targetZone.Length == 0 ? enemy + " Suppression" : targetZone + " Suppression";
             return enemy + " Cull";
         }
 
-        internal static string BuildObjective(string enemyName, string zone, int targetCount)
+        internal static string BuildObjective(string enemyName, string zone, int targetCount, int observedCount)
         {
+            string display = ContractEnemyTargetPolicy.BuildDisplayTarget(enemyName, targetCount, observedCount);
             return "Kill " + Math.Max(1, targetCount).ToString(CultureInfo.InvariantCulture) + " " +
-                ContractCore.Clean(enemyName, 80) + " in " + ContractCore.Clean(zone, 80) + ".";
+                ContractCore.Clean(display, 80) + " in " + ContractCore.Clean(zone, 80) + ".";
         }
 
         internal static int MergeObservations(ContractDocument document, IList<ContractEnemyObservation> observations, long activePlaySeconds)
         {
             if (document == null || observations == null) return 0;
-            int changed = 0;
+            int changed = PruneNamedEnemyRecords(document.EnemyCatalog);
             long seenAt = Math.Max(0L, activePlaySeconds);
             for (int i = 0; i < observations.Count; i++)
             {
                 ContractEnemyObservation observation = observations[i];
                 if (!IsUsableObservation(observation)) continue;
+                if (!ContractMobTargetPolicy.IsMobTarget(observation.EnemyName, observation.Count)) continue;
                 string zone = ContractCore.Clean(observation.Zone, 128);
                 string name = ContractCore.Clean(observation.EnemyName, 120);
                 ContractEnemyRecord existing = FindEnemyRecord(document.EnemyCatalog, zone, name);
@@ -134,20 +138,13 @@ namespace ErenshorContracts
             if (document == null || string.IsNullOrWhiteSpace(boardZone) || currentObservations == null || playerLevel <= 0) return false;
             int safeRevision = Math.Max(0, revision);
             string zone = ContractCore.Clean(boardZone, 128);
-            if (document.LocalCombatGenerationRevision == safeRevision &&
-                string.Equals(document.LocalCombatGenerationZone ?? string.Empty, zone, StringComparison.OrdinalIgnoreCase))
-                return false;
 
-            // A new revision must never display the previous revision's generated targets.
-            // If no eligible enemies are visible yet (for example immediately after a scene load),
-            // clear stale generated offers but leave this revision unfrozen so the bounded scanner
-            // can retry. Freeze only after we can prove at least one completable combat target.
-            bool hadLocalGenerated = HasGenerated(document.GeneratedCombatOffers, ContractCategory.Local);
-            bool localGenerationStateChanged = hadLocalGenerated || document.LocalCombatGenerationRevision != -1 ||
-                !string.Equals(document.LocalCombatGenerationZone ?? string.Empty, zone, StringComparison.OrdinalIgnoreCase);
-            RemoveGenerated(document.GeneratedCombatOffers, ContractCategory.Local);
-            document.LocalCombatGenerationRevision = -1;
-            document.LocalCombatGenerationZone = zone;
+            // Local board identity is revision + playable zone. Preserve each zone's generated set
+            // for the life of the revision so A -> B -> A returns the original A targets instead of
+            // turning zoning into a reroll surface. Older revisions are bounded/pruned separately.
+            bool changed = RemoveGeneratedOutsideRevision(document.GeneratedCombatOffers, ContractCategory.Local, safeRevision);
+            if (HasGeneratedBoard(document.GeneratedCombatOffers, ContractCategory.Local, safeRevision, zone))
+                return changed;
 
             List<ContractEnemyRecord> candidates = new List<ContractEnemyRecord>();
             for (int i = 0; i < currentObservations.Count; i++)
@@ -155,6 +152,7 @@ namespace ErenshorContracts
                 ContractEnemyObservation observation = currentObservations[i];
                 if (!IsUsableObservation(observation) ||
                     !string.Equals(observation.Zone, zone, StringComparison.OrdinalIgnoreCase) ||
+                    !ContractMobTargetPolicy.IsMobTarget(observation.EnemyName, observation.Count) ||
                     !IsLevelAppropriate(playerLevel, observation.MinLevel, observation.MaxLevel))
                     continue;
                 ContractEnemyRecord record = new ContractEnemyRecord();
@@ -165,10 +163,12 @@ namespace ErenshorContracts
                 record.ObservedCount = Math.Max(1, observation.Count);
                 candidates.Add(record);
             }
-            if (candidates.Count == 0) return localGenerationStateChanged;
-            document.LocalCombatGenerationRevision = safeRevision;
+            if (candidates.Count == 0) return changed;
+
             AddGenerated(document, ContractCategory.Local, safeRevision, zone, zone,
                 profileKey, playerLevel, slotCount, candidates);
+            document.LocalCombatGenerationRevision = safeRevision; // legacy diagnostic/persistence only
+            document.LocalCombatGenerationZone = zone;
             return true;
         }
 
@@ -194,6 +194,7 @@ namespace ErenshorContracts
                 ContractEnemyRecord record = document.EnemyCatalog[i];
                 if (record == null || string.IsNullOrWhiteSpace(record.Zone) || string.IsNullOrWhiteSpace(record.EnemyName)) continue;
                 if (string.Equals(record.Zone, currentZone ?? string.Empty, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!ContractMobTargetPolicy.IsMobTarget(record.EnemyName, record.ObservedCount)) continue;
                 if (!IsLevelAppropriate(playerLevel, record.MinLevel, record.MaxLevel)) continue;
                 candidates.Add(record);
             }
@@ -216,6 +217,12 @@ namespace ErenshorContracts
                     continue;
 
                 string category = ContractCategory.Normalize(generated.Category);
+                if (string.Equals(category, ContractCategory.Local, StringComparison.Ordinal) && generated.BoardRevision != document.LocalBoardRevision) continue;
+                if (string.Equals(category, ContractCategory.Global, StringComparison.Ordinal) && generated.BoardRevision != document.GlobalBoardRevision) continue;
+                int observedCount = FindObservedCount(document, generated.TargetZone, generated.EnemyName);
+                // Retires named-individual offers persisted by builds that generated them.
+                if (!ContractMobTargetPolicy.IsMobTarget(generated.EnemyName, observedCount)) continue;
+                bool exactNamedTarget = ContractEnemyTargetPolicy.IsLikelyExactNamedTarget(generated.EnemyName, observedCount);
                 string stable = category + "|" + generated.BoardRevision.ToString(CultureInfo.InvariantCulture) + "|" +
                     generated.TargetZone + "|" + generated.EnemyName;
                 ContractTemplate template = new ContractTemplate();
@@ -225,8 +232,8 @@ namespace ErenshorContracts
                 template.ZoneScope = string.Equals(category, ContractCategory.Local, StringComparison.Ordinal)
                     ? generated.TargetZone : "*";
                 template.TargetZone = generated.TargetZone;
-                template.Title = BuildTitle(category, generated.EnemyName, generated.TargetZone);
-                template.Description = BuildObjective(generated.EnemyName, generated.TargetZone, generated.TargetCount);
+                template.Title = BuildTitle(category, generated.EnemyName, generated.TargetZone, exactNamedTarget);
+                template.Description = BuildObjective(generated.EnemyName, generated.TargetZone, generated.TargetCount, observedCount);
                 template.ProgressChannel = "native_combat";
                 template.ProgressKey = NativeKillProgressKey;
                 template.ContextFilter = generated.EnemyName;
@@ -293,6 +300,10 @@ namespace ErenshorContracts
 
             candidates.Sort(delegate(ContractEnemyRecord a, ContractEnemyRecord b)
             {
+                bool aExact = ContractEnemyTargetPolicy.IsLikelyExactNamedTarget(a.EnemyName, a.ObservedCount);
+                bool bExact = ContractEnemyTargetPolicy.IsLikelyExactNamedTarget(b.EnemyName, b.ObservedCount);
+                int byKind = aExact.CompareTo(bExact); // repeatable/generic grind targets first
+                if (byKind != 0) return byKind;
                 int ad = LevelDistance(playerLevel, a.MinLevel, a.MaxLevel);
                 int bd = LevelDistance(playerLevel, b.MinLevel, b.MaxLevel);
                 int byDistance = ad.CompareTo(bd);
@@ -326,11 +337,66 @@ namespace ErenshorContracts
                 generated.TargetZone = candidate.Zone;
                 generated.EnemyName = candidate.EnemyName;
                 generated.EnemyLevel = RepresentativeLevel(candidate.MinLevel, candidate.MaxLevel);
-                generated.TargetCount = ResolveTargetCount(category, offerSeed);
+                generated.TargetCount = ContractEnemyTargetPolicy.ResolveTargetCount(category, offerSeed, candidate.EnemyName, candidate.ObservedCount);
                 generated.RewardXpBasisPoints = ResolveXpBasisPoints(category, offerSeed);
                 document.GeneratedCombatOffers.Add(generated);
                 take--;
             }
+        }
+
+        internal static int FindObservedCount(ContractDocument document, string zone, string enemyName)
+        {
+            if (document == null) return 1;
+            ContractEnemyRecord record = FindEnemyRecord(document.EnemyCatalog, zone, enemyName);
+            return record == null ? 0 : Math.Max(1, record.ObservedCount);
+        }
+
+        internal static bool NormalizeGeneratedOfferForCurrentEvidence(ContractDocument document, ContractGeneratedCombatOffer offer)
+        {
+            if (document == null || offer == null || string.IsNullOrWhiteSpace(offer.TargetZone) || string.IsNullOrWhiteSpace(offer.EnemyName)) return false;
+            int observed = FindObservedCount(document, offer.TargetZone, offer.EnemyName);
+            if (observed <= 0) return false;
+            int capped = ContractEnemyTargetPolicy.CapPersistedTargetCount(offer.Category, offer.EnemyName, observed, offer.TargetCount);
+            if (capped == offer.TargetCount) return false;
+            offer.TargetCount = capped;
+            return true;
+        }
+
+        private static bool HasGeneratedBoard(List<ContractGeneratedCombatOffer> offers, string category, int revision, string boardZone)
+        {
+            string normalized = ContractCategory.Normalize(category);
+            for (int i = 0; i < offers.Count; i++)
+            {
+                ContractGeneratedCombatOffer value = offers[i];
+                if (value == null) continue;
+                if (!string.Equals(ContractCategory.Normalize(value.Category), normalized, StringComparison.Ordinal)) continue;
+                if (value.BoardRevision != revision) continue;
+                if (!string.Equals(value.BoardZone ?? string.Empty, boardZone ?? string.Empty, StringComparison.OrdinalIgnoreCase)) continue;
+                return true;
+            }
+            return false;
+        }
+
+        private static bool RemoveGeneratedOutsideRevision(List<ContractGeneratedCombatOffer> offers, string category, int revision)
+        {
+            bool changed = false;
+            string normalized = ContractCategory.Normalize(category);
+            for (int i = offers.Count - 1; i >= 0; i--)
+            {
+                ContractGeneratedCombatOffer value = offers[i];
+                if (value == null)
+                {
+                    offers.RemoveAt(i);
+                    changed = true;
+                    continue;
+                }
+                if (string.Equals(ContractCategory.Normalize(value.Category), normalized, StringComparison.Ordinal) && value.BoardRevision != revision)
+                {
+                    offers.RemoveAt(i);
+                    changed = true;
+                }
+            }
+            return changed;
         }
 
         private static ContractEnemyRecord FindEnemyRecord(List<ContractEnemyRecord> records, string zone, string enemyName)
@@ -367,6 +433,22 @@ namespace ErenshorContracts
                 if (value == null || string.Equals(ContractCategory.Normalize(value.Category), normalized, StringComparison.Ordinal))
                     offers.RemoveAt(i);
             }
+        }
+
+        // Catalog records persist across sessions, so a named individual captured by an older
+        // build has to be retired here rather than only being filtered at generation time.
+        private static int PruneNamedEnemyRecords(List<ContractEnemyRecord> catalog)
+        {
+            if (catalog == null) return 0;
+            int removed = 0;
+            for (int i = catalog.Count - 1; i >= 0; i--)
+            {
+                ContractEnemyRecord record = catalog[i];
+                if (record != null && ContractMobTargetPolicy.IsMobTarget(record.EnemyName, record.ObservedCount)) continue;
+                catalog.RemoveAt(i);
+                removed++;
+            }
+            return removed;
         }
 
         private static void EvictOldestEnemyRecord(List<ContractEnemyRecord> records)
